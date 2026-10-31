@@ -11,6 +11,7 @@ import Zsign
 import NimbleJSON
 import AltSourceKit
 import IDeviceSwift
+import NimbleExtensions
 
 enum FR {
 	static func handlePackageFile(
@@ -39,19 +40,19 @@ enum FR {
 		}
 	}
 	
+	@MainActor
 	static func signPackageFile(
-		_ app: AppInfoPresentable,
+		appURL: URL,
 		using options: Options,
 		icon: UIImage?,
-		certificate: CertificatePair?,
 		identityOverride: ODSigningOverride? = nil,
 		completion: @escaping (Error?, String?) -> Void
 	) {
+		let iconData = icon?.pngData()
 		Task.detached {
-			let handler = SigningHandler(app: app, options: options)
-			handler.appCertificate = certificate
+			let handler = SigningHandler(sourceAppURL: appURL, options: options)
 			handler.signingOverride = identityOverride
-			handler.appIcon = icon
+			handler.appIconData = iconData
 
 			do {
 				try await handler.copy()
@@ -134,59 +135,32 @@ enum FR {
 		HeartbeatManager.shared.start(true)
 	}
 	
-	static func downloadSSLCertificates(
-		from urlString: String,
-		completion: @escaping (Bool) -> Void
-	) {
-		let generator = UINotificationFeedbackGenerator()
-		generator.prepare()
-		
-		NBFetchService().fetch(from: urlString) { (result: Result<ServerView.ServerPackModel, Error>) in
-			switch result {
-			case .success(let pack):
-				do {
-					try FileManager.forceWrite(content: pack.key, to: "server.pem")
-					try FileManager.forceWrite(content: pack.cert, to: "server.crt")
-					try FileManager.forceWrite(content: pack.info.domains.commonName, to: "commonName.txt")
-					generator.notificationOccurred(.success)
-					completion(true)
-				} catch {
-					completion(false)
-				}
-			case .failure(_):
-				completion(false)
-			}
-		}
-	}
-	
 	static func handleSource(
 		_ urlString: String,
 		competion: @escaping () -> Void
 	) {
 		guard let url = URL(string: urlString) else { return }
-		
+
 		NBFetchService().fetch<ASRepository>(from: url) { (result: Result<ASRepository, Error>) in
-			switch result {
-			case .success(let data):
-				let id = data.id ?? url.absoluteString
-				
-				if !Storage.shared.sourceExists(id) {
-					Storage.shared.addSource(url, repository: data, id: id) { _ in
-						competion()
-					}
-				} else {
-					DispatchQueue.main.async {
+			Task { @MainActor in
+				switch result {
+				case .success(let data):
+					let id = data.id ?? url.absoluteString
+					if !Storage.shared.sourceExists(id) {
+						Storage.shared.addSource(url, repository: data, id: id) { _ in
+							competion()
+						}
+					} else {
 						UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Repository already added."))
 					}
-				}
-			case .failure(let error):
-				DispatchQueue.main.async {
+				case .failure(let error):
 					UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
 				}
 			}
 		}
 	}
-	
+
+	@MainActor
 	static func exportCertificateAndOpenUrl(using template: String) {
 		// Helper that performs the export for a given certificate
 		func performExport(for certificate: CertificatePair) {

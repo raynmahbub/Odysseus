@@ -13,6 +13,7 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import OSLog
+import NimbleExtensions
 
 @MainActor
 final class ODCertificateStatusStore: ObservableObject {
@@ -58,7 +59,9 @@ final class ODCertificateStatusStore: ObservableObject {
 	// MARK: Checking
 	@discardableResult
 	func check(_ cert: CertificatePair) async -> ODOCSPResult {
-		let key = Self.key(for: cert)
+		let objectID = cert.objectID
+		let uuid = cert.uuid
+		let key = "cert:\(uuid ?? "?")"
 		let name = cert.nickname ?? Storage.shared.getProvisionFileDecoded(for: cert)?.Name ?? .localized("Certificate")
 
 		guard let der = ODCertificateLoader.certificateDER(for: cert) else {
@@ -69,12 +72,18 @@ final class ODCertificateStatusStore: ObservableObject {
 
 		let result = await check(der: der, key: key, name: name)
 
-		// Keep Feather's flag in sync, in both directions.
+		// The network check suspends this actor. Resolve a fresh viewContext
+		// object by permanent ID before updating the legacy flag.
+		guard let current = try? Storage.shared.context.existingObject(with: objectID) as? CertificatePair else {
+			return result
+		}
 		switch result.status {
-		case .revoked:
-			if !cert.revoked { cert.revoked = true; Storage.shared.saveContext() }
-		case .valid:
-			if cert.revoked { cert.revoked = false; Storage.shared.saveContext() }
+		case .revoked where !current.revoked:
+			current.revoked = true
+			Storage.shared.saveContext()
+		case .valid where current.revoked:
+			current.revoked = false
+			Storage.shared.saveContext()
 		default:
 			break
 		}
@@ -97,7 +106,7 @@ final class ODCertificateStatusStore: ObservableObject {
 		guard force || hours > 0 else { return }
 
 		for cert in Storage.shared.getAllCertificates() {
-			if !force, let last = result(for: cert)?.checkedAt, Date().timeIntervalSince(last) < Double(hours) * 3600 {
+			if !force, let result = result(for: cert), result.isFresh(maximumAge: Double(hours) * 3600) {
 				continue
 			}
 			await check(cert)

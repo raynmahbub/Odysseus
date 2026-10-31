@@ -9,6 +9,7 @@ import SwiftUI
 import NimbleViews
 import IDeviceSwift
 import OSLog
+import NimbleExtensions
 
 // MARK: - View
 struct InstallPreviewView: View {
@@ -31,7 +32,12 @@ struct InstallPreviewView: View {
 		self.isSharing = isSharing
 		let viewModel = InstallerStatusViewModel(isIdevice: UserDefaults.standard.integer(forKey: "Feather.installationMethod") == 1)
 		self._viewModel = StateObject(wrappedValue: viewModel)
-		self._installer = StateObject(wrappedValue: try! ServerInstaller(app: app, viewModel: viewModel))
+		let hasServerMetadata = [app.identifier, app.name, app.version].allSatisfy { $0?.isEmpty == false }
+		let needsServer = !isSharing
+			&& UserDefaults.standard.integer(forKey: "Feather.installationMethod") == 0
+			&& hasServerMetadata
+		let serverApp = ServerAppSnapshot(identifier: app.identifier, name: app.name, version: app.version)
+		self._installer = StateObject(wrappedValue: ServerInstaller.make(app: serverApp, viewModel: viewModel, startServer: needsServer))
 	}
 	
 	// MARK: Body
@@ -60,7 +66,11 @@ struct InstallPreviewView: View {
 			if _installationMethod == 0 {
 				if case .ready = newStatus {
 					if _serverMethod == 0 {
-						UIApplication.shared.open(URL(string: installer.iTunesLink)!)
+						if let installURL = URL(string: installer.iTunesLink) {
+							UIApplication.shared.open(installURL)
+						} else {
+							viewModel.status = .broken(SigningFileHandlerError.invalidInstallationURL)
+						}
 					} else if _serverMethod == 1 {
 						_isWebviewPresenting = true
 					}
@@ -70,12 +80,11 @@ struct InstallPreviewView: View {
 					_isWebviewPresenting = false
 				}
 				
-				if case .installing = newStatus {
-					if progressTask == nil {
-						progressTask = startInstallProgressPolling(
-							bundleID: app.identifier!,
-							viewModel: viewModel
-						)
+				if case .installing = newStatus, progressTask == nil {
+					if let bundleID = installer.app.identifier {
+						progressTask = startInstallProgressPolling(bundleID: bundleID, viewModel: viewModel)
+					} else {
+						viewModel.status = .broken(SigningFileHandlerError.appIdentifierNotFound)
 					}
 				}
 				
@@ -135,72 +144,87 @@ struct InstallPreviewView: View {
 		.animation(.easeInOut(duration: 0.3), value: viewModel.isCompleted)
 	}
 	
+	@MainActor
 	private func _install() {
-		guard isSharing || app.identifier != Bundle.main.bundleIdentifier! || _installationMethod == 1 else {
+		if !isSharing, _installationMethod == 0, let error = installer.startupError {
+			viewModel.status = .broken(error)
+			UIAlertController.showAlertWithOk(
+				title: .localized("Couldn't start local server"),
+				message: error.localizedDescription
+			)
+			return
+		}
+		if !isSharing, _installationMethod == 0 {
+			guard
+				let identifier = installer.app.identifier, !identifier.isEmpty,
+				let name = installer.app.name, !name.isEmpty,
+				let version = installer.app.version, !version.isEmpty
+			else {
+				let error = SigningFileHandlerError.appMetadataNotFound
+				viewModel.status = .broken(error)
+				UIAlertController.showAlertWithOk(
+					title: .localized("Couldn't install app"),
+					message: error.localizedDescription
+				)
+				return
+			}
+		}
+
+		let isSelfUpdate = Bundle.main.bundleIdentifier.map { app.identifier == $0 } ?? false
+		guard isSharing || !isSelfUpdate || _installationMethod == 1 else {
 			UIAlertController.showAlertWithOk(
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
 			)
 			return
 		}
-				
-		Task.detached {
-			do {
-				let handler = await ArchiveHandler(app: app, viewModel: viewModel)
-				try await handler.move()
-				
-				let packageUrl = try await handler.archive()
-				
-				if await !isSharing {
-					if await _installationMethod == 0 {
-						await MainActor.run {
-							installer.packageUrl = packageUrl
-							viewModel.status = .ready
-						}
-						
-						if case .installing = await viewModel.status {
-							let task = await startInstallProgressPolling(
-								bundleID: app.identifier!,
-								viewModel: viewModel
-							)
+		guard let appURL = Storage.shared.getAppDirectory(for: app) else {
+			UIAlertController.showAlertWithOk(
+				title: .localized("Install"),
+				message: SigningFileHandlerError.appNotFound.localizedDescription
+			)
+			return
+		}
 
-							await MainActor.run {
-								progressTask = task
-							}
-						}
-					} else if await _installationMethod == 1 {
-						let handler = await InstallationProxy(viewModel: viewModel)
-						try await handler.install(at: packageUrl, suspend: app.identifier == Bundle.main.bundleIdentifier!)
+		let snapshot = AppArchiveSnapshot(
+			appURL: appURL,
+			name: app.name,
+			version: app.version,
+			identifier: app.identifier
+		)
+
+		Task { @MainActor in
+			do {
+				let handler = ArchiveHandler(snapshot: snapshot, viewModel: viewModel)
+				try await handler.move()
+				let packageURL = try await handler.archive()
+
+				if !isSharing {
+					if _installationMethod == 0 {
+						installer.packageUrl = packageURL
+						viewModel.status = .ready
+					} else if _installationMethod == 1 {
+						let proxy = InstallationProxy(viewModel: viewModel)
+						try await proxy.install(
+							at: packageURL,
+							suspend: snapshot.identifier == Bundle.main.bundleIdentifier
+						)
 					}
 				} else {
-					let package = try await handler.moveToArchive(packageUrl, shouldOpen: !_useShareSheet)
-					
-					if await !_useShareSheet {
-						await MainActor.run {
-							dismiss()
-						}
+					let package = try await handler.moveToArchive(packageURL, shouldOpen: !_useShareSheet)
+					if !_useShareSheet {
+						dismiss()
 					} else {
-						if let package {
-							await MainActor.run {
-								dismiss()
-								UIActivityViewController.show(activityItems: [package])
-							}
-						}
+						UIActivityViewController.show(activityItems: [package])
 					}
 				}
 			} catch {
-				await progressTask?.cancel()
-				
-				await MainActor.run {
-					UIAlertController.showAlertWithOk(
-						title: .localized("Install"),
-						message: String(describing: error),
-						action: {
-							HeartbeatManager.shared.start(true)
-							dismiss()
-						}
-					)
-				}
+				progressTask?.cancel()
+				UIAlertController.showAlertWithOk(
+					title: .localized("Install"),
+					message: error.localizedDescription,
+					action: { HeartbeatManager.shared.start(true); dismiss() }
+				)
 			}
 		}
 	}

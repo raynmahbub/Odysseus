@@ -7,6 +7,7 @@
 
 import Foundation
 import UIKit
+import NimbleExtensions
 
 // MARK: - OptionsManager
 class OptionsManager: ObservableObject {
@@ -43,7 +44,7 @@ class OptionsManager: ObservableObject {
 }
 
 // MARK: - Options
-struct Options: Codable, Equatable {
+struct Options: Codable, Equatable, Sendable {
 	
 	// MARK: Pre Modifications
 	
@@ -155,12 +156,12 @@ struct Options: Codable, Equatable {
 		// MARK: Post Modifications
 		
 		post_installAppAfterSigned: true,
-		post_deleteAppAfterSigned: true
+		post_deleteAppAfterSigned: false
 	)
 	
 	// MARK: duplicate values are not recommended!
 
-	enum AppAppearance: String, Codable, CaseIterable, LocalizedDescribable {
+	enum AppAppearance: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case `default`
 		case light = "Light"
 		case dark = "Dark"
@@ -174,7 +175,7 @@ struct Options: Codable, Equatable {
 		}
 	}
 
-	enum MinimumAppRequirement: String, Codable, CaseIterable, LocalizedDescribable {
+	enum MinimumAppRequirement: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case `default`
 		case v16 = "16.0"
 		case v15 = "15.0"
@@ -194,7 +195,7 @@ struct Options: Codable, Equatable {
 		}
 	}
 	
-	enum SigningOption: String, Codable, CaseIterable, LocalizedDescribable {
+	enum SigningOption: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case `default`
 		case onlyModify
 //		case adhoc
@@ -208,12 +209,12 @@ struct Options: Codable, Equatable {
 		}
 	}
 	
-	enum InjectPath: String, Codable, CaseIterable, LocalizedDescribable {
+	enum InjectPath: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case executable_path = "@executable_path"
 		case rpath = "@rpath"
 	}
 	
-	enum InjectFolder: String, Codable, CaseIterable, LocalizedDescribable {
+	enum InjectFolder: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case root = "/"
 		case frameworks = "/Frameworks/"
 	}

@@ -7,81 +7,183 @@
 
 import CoreData
 import Foundation
+import OSLog
 
-// MARK: - Storage
+// All synchronous access to viewContext is main-actor isolated. Detached
+// work uses fresh background contexts and passes only object IDs/snapshots.
+@MainActor
 final class Storage: ObservableObject {
 	static let shared = Storage()
 	let container: NSPersistentContainer
-	
-	private let _name: String = "Feather"
 
-	init(inMemory: Bool = false) {
+	private let _name = "Feather"
+	private enum StoreLoadState {
+		case loading
+		case loaded
+		case failed(Error)
+	}
+	private var _storeLoadState: StoreLoadState = .loading
+	private var _storeLoadWaiters: [CheckedContinuation<Void, Error>] = []
+	@Published private(set) var storeLoadError: Error?
+	@Published private(set) var isStoreLoaded = false
+
+	init(inMemory: Bool = false, storeURL: URL? = nil) {
 		container = NSPersistentContainer(name: _name)
 
-		if inMemory {
-			container.persistentStoreDescriptions.first?.url =
-				URL(fileURLWithPath: "/dev/null")
+		if let description = container.persistentStoreDescriptions.first {
+			if inMemory {
+				description.type = NSInMemoryStoreType
+				description.url = nil
+			} else if let storeURL {
+				description.url = storeURL
+			}
 		}
 
-		_loadPersistentStoreAggressively()
 		container.viewContext.automaticallyMergesChangesFromParent = true
 		container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+		_loadPersistentStore()
 	}
 
 	var context: NSManagedObjectContext {
 		container.viewContext
 	}
-	
-	func saveContext() {
-		DispatchQueue.main.async {
-			if self.context.hasChanges {
-				try? self.context.save()
+
+	/// Awaitable readiness avoids semaphores, synchronous waits, and races
+	/// against NSPersistentContainer.loadPersistentStores().
+	func waitUntilStoreLoaded() async throws {
+		switch _storeLoadState {
+		case .loaded:
+			return
+		case .failed(let error):
+			throw error
+		case .loading:
+			try await withCheckedThrowingContinuation { continuation in
+				_storeLoadWaiters.append(continuation)
 			}
 		}
 	}
-	
-	func clearContext<T: NSManagedObject>(request: NSFetchRequest<T>) {
-		let deleteRequest = NSBatchDeleteRequest(fetchRequest: (request as? NSFetchRequest<NSFetchRequestResult>)!)
-		_ = try? context.execute(deleteRequest)
+
+	func makeBackgroundContext() -> NSManagedObjectContext {
+		let context = container.newBackgroundContext()
+		context.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+		context.undoManager = nil
+		return context
 	}
-	
+
+	func saveContext() {
+		guard context.hasChanges else { return }
+		do {
+			try context.save()
+		} catch {
+			Logger.misc.error("Core Data save failed (error code \(error._code)); existing store files were preserved.")
+		}
+	}
+
+	/// Deletes all records of one entity on a private context. If app files are
+	/// supplied, they are quarantined first and restored if the database save
+	/// fails, so a failed reset cannot silently erase the corresponding files.
+	func deleteAllRecords<T: NSManagedObject>(of entity: T.Type, filesAt directory: URL? = nil) async throws {
+		try await waitUntilStoreLoaded()
+
+		var quarantinedDirectory: (original: URL, quarantine: URL)?
+		if let directory, FileManager.default.fileExists(atPath: directory.path) {
+			let quarantine = directory.deletingLastPathComponent()
+				.appendingPathComponent(".\(directory.lastPathComponent).deleting-\(UUID().uuidString)", isDirectory: true)
+			try await Task.detached(priority: .utility) {
+				try FileManager.default.moveItem(at: directory, to: quarantine)
+			}.value
+			quarantinedDirectory = (directory, quarantine)
+		}
+
+		let backgroundContext = makeBackgroundContext()
+		do {
+			try await backgroundContext.perform {
+				let request = NSFetchRequest<T>(entityName: String(describing: entity))
+				for object in try backgroundContext.fetch(request) {
+					backgroundContext.delete(object)
+				}
+				if backgroundContext.hasChanges {
+					try backgroundContext.save()
+				}
+			}
+		} catch {
+			await backgroundContext.perform {
+				backgroundContext.rollback()
+			}
+			if let quarantinedDirectory {
+				do {
+					try await Task.detached(priority: .utility) {
+						try FileManager.default.moveItem(
+							at: quarantinedDirectory.quarantine,
+							to: quarantinedDirectory.original
+						)
+					}.value
+				} catch {
+					Logger.misc.error("Could not restore Library files after a failed reset (error code \(error._code)).")
+					throw StorageDeleteError.fileRestoreFailed
+				}
+			}
+			throw error
+		}
+
+		if let quarantinedDirectory {
+			do {
+				try await Task.detached(priority: .utility) {
+					try FileManager.default.removeItem(at: quarantinedDirectory.quarantine)
+				}.value
+			} catch {
+				Logger.misc.error("Library records were reset, but quarantined files could not be removed (error code \(error._code)).")
+				throw StorageDeleteError.fileCleanupFailed
+			}
+		}
+	}
+
 	func countContent<T: NSManagedObject>(for type: T.Type) -> String {
 		let request = T.fetchRequest()
 		return "\((try? context.count(for: request)) ?? 0)"
 	}
 
-	private func _loadPersistentStoreAggressively() {
-		container.loadPersistentStores { description, error in
-			if error != nil {
-				self._destroyStore(at: description.url)
-				self.container.loadPersistentStores { _, error in
-					if let error {
-						fatalError("Core Data unrecoverable: \(error)")
-					}
-				}
+	private func _loadPersistentStore() {
+		container.loadPersistentStores { [weak self] _, error in
+			Task { @MainActor in
+				self?._finishLoading(error: error)
 			}
 		}
 	}
 
-	private func _destroyStore(at url: URL?) {
-		guard let url else { return }
+	private func _finishLoading(error: Error?) {
+		guard case .loading = _storeLoadState else { return }
 
-		let base = url.deletingPathExtension()
-		let fm = FileManager.default
-
-		let files = [
-			base.appendingPathExtension("sqlite"),
-			base.appendingPathExtension("sqlite-wal"),
-			base.appendingPathExtension("sqlite-shm")
-		]
-
-		for file in files {
-			try? fm.removeItem(at: file)
+		let result: Result<Void, Error>
+		if let error {
+			storeLoadError = error
+			_storeLoadState = .failed(error)
+			result = .failure(error)
+			Logger.misc.error("Core Data store could not be opened (error code \(error._code)); no store or Library files were deleted.")
+		} else {
+			_storeLoadState = .loaded
+			isStoreLoaded = true
+			result = .success(())
 		}
-		
-		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed)
-		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.unsigned)
-		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.certificates)
-		UserDefaults.standard.set(0, forKey: "feather.selectedCert")
+
+		let waiters = _storeLoadWaiters
+		_storeLoadWaiters.removeAll()
+		for waiter in waiters {
+			waiter.resume(with: result)
+		}
+	}
+}
+
+private enum StorageDeleteError: LocalizedError {
+	case fileRestoreFailed
+	case fileCleanupFailed
+
+	var errorDescription: String? {
+		switch self {
+		case .fileRestoreFailed:
+			return "Library files couldn't be restored after the reset failed; they remain in a hidden recovery directory."
+		case .fileCleanupFailed:
+			return "Library records were reset, but quarantined app files couldn't be removed and remain in a hidden recovery directory."
+		}
 	}
 }

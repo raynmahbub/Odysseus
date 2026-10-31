@@ -156,6 +156,7 @@ enum ODCertificateLoader {
 		return plist["DeveloperCertificates"] as? [Data] ?? []
 	}
 
+	@MainActor
 	static func certificateDER(for cert: CertificatePair) -> Data? {
 		if let p12 = Storage.shared.getFile(.certificate, from: cert),
 		   let der = leafCertificate(p12: p12, password: cert.password) {

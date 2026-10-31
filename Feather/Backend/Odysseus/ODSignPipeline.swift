@@ -17,6 +17,7 @@ import SwiftUI
 import CoreData
 import AltSourceKit
 import OSLog
+import NimbleExtensions
 
 extension Notification.Name {
 	/// object: Signed app UUID (String). Shows the install sheet.
@@ -48,6 +49,15 @@ enum ODSignError: LocalizedError {
 	}
 }
 
+private struct ODSignAppSnapshot {
+	let uuid: String
+	let isSigned: Bool
+	let appURL: URL
+	let identifier: String?
+	let name: String?
+	let objectID: NSManagedObjectID?
+}
+
 @MainActor
 final class ODSignPipeline: ObservableObject {
 	static let shared = ODSignPipeline()
@@ -74,9 +84,12 @@ final class ODSignPipeline: ObservableObject {
 			if notification.userInfo?["remote"] as? Bool == true {
 				ODDownloadOrigin.markDownloaded(uuid)
 			}
-			guard let downloadID = notification.userInfo?["downloadID"] as? String else { return }
+			guard
+				let downloadID = notification.userInfo?["downloadID"] as? String,
+				let objectID = notification.userInfo?["managedObjectID"] as? NSManagedObjectID
+			else { return }
 			Task { @MainActor in
-				ODSignPipeline.shared._didImport(uuid: uuid, downloadID: downloadID)
+				ODSignPipeline.shared._didImport(uuid: uuid, objectID: objectID, downloadID: downloadID)
 			}
 		}
 	}
@@ -123,17 +136,43 @@ final class ODSignPipeline: ObservableObject {
 		icon: UIImage? = nil,
 		identity: ODSigningIdentity
 	) async throws -> String {
+		guard
+			let appUUID = app.uuid,
+			let appURL = Storage.shared.getAppDirectory(for: app)
+		else {
+			throw SigningFileHandlerError.appNotFound
+		}
+		guard let appIdentifier = app.identifier, !appIdentifier.isEmpty else {
+			throw SigningFileHandlerError.appIdentifierNotFound
+		}
+		let appSnapshot = ODSignAppSnapshot(
+			uuid: appUUID,
+			isSigned: app.isSigned,
+			appURL: appURL,
+			identifier: app.identifier,
+			name: app.name,
+			objectID: (app as? NSManagedObject)?.objectID
+		)
+
 		var options = inputOptions
-		var certificate: CertificatePair?
 		var identityOverride: ODSigningOverride?
 		var appleIDMaterial: ODAppleIDSigningMaterial?
+		defer {
+			if let material = appleIDMaterial {
+				do {
+					try FileManager.default.removeItem(at: material.p12URL.deletingLastPathComponent())
+				} catch {
+					Logger.misc.error("Could not remove temporary Apple ID signing material (error code \(error._code)).")
+				}
+			}
+		}
 
 		if UserDefaults.standard.bool(forKey: ODPrefs.autoDeleteIPAs) {
 			options.post_deleteAppAfterSigned = true
 		}
 
 		// Bundle ID prefix / suffix from Settings.
-		if let base = options.appIdentifier ?? app.identifier {
+		if let base = options.appIdentifier ?? appSnapshot.identifier {
 			let adjusted = ODPrefs.adjustedBundleID(base)
 			if adjusted != base || options.appIdentifier != nil {
 				options.appIdentifier = adjusted
@@ -146,20 +185,41 @@ final class ODSignPipeline: ObservableObject {
 				throw ODSignError.noCertificate
 			}
 			if let cert {
+				let certificateUUID = cert.uuid
+				let certificateName = cert.nickname
+					?? Storage.shared.getProvisionFileDecoded(for: cert)?.Name
+					?? .localized("This certificate")
+				var signingMaterial: ODSigningOverride?
+				if options.signingOption == .default {
+					guard
+						let certificateUUID,
+						let p12URL = Storage.shared.getFile(.certificate, from: cert),
+						let provisionURL = Storage.shared.getFile(.provision, from: cert)
+					else {
+						throw ODSignError.noCertificate
+					}
+					signingMaterial = ODSigningOverride(
+						p12Path: p12URL.path,
+						p12Password: cert.password ?? "",
+						provisionPath: provisionURL.path,
+						certificateUUID: certificateUUID
+					)
+				}
 				try await _revocationGate(
 					result: await _freshResult(for: cert),
-					name: cert.nickname ?? Storage.shared.getProvisionFileDecoded(for: cert)?.Name ?? .localized("This certificate")
+					name: certificateName
 				)
+				identityOverride = signingMaterial
 			}
-			certificate = cert
 
 		case .appleID:
 			let manager = ODAppleIDManager.shared
-			let base = options.appIdentifier ?? app.identifier ?? "com.odysseus.app"
+			let base = options.appIdentifier ?? appIdentifier
 			let material = try await manager.prepareSigning(
 				bundleIdentifier: base,
-				appName: options.appName ?? app.name ?? "App"
+				appName: options.appName ?? appSnapshot.name ?? "App"
 			)
+			appleIDMaterial = material
 			if let status = ODCertificateStatusStore.shared.results[ODCertificateStatusStore.appleIDKey] {
 				try await _revocationGate(result: status, name: .localized("Your Apple ID certificate"))
 			}
@@ -175,30 +235,29 @@ final class ODSignPipeline: ObservableObject {
 				p12Password: material.p12Password,
 				provisionPath: material.provisionURL.path
 			)
-			appleIDMaterial = material
 		}
 
 		let signedUUID: String = try await withCheckedThrowingContinuation { continuation in
 			FR.signPackageFile(
-				app,
+				appURL: appSnapshot.appURL,
 				using: options,
 				icon: icon,
-				certificate: certificate,
 				identityOverride: identityOverride
 			) { error, uuid in
 				if let error {
 					continuation.resume(throwing: error)
+				} else if let uuid, !uuid.isEmpty {
+					continuation.resume(returning: uuid)
 				} else {
-					continuation.resume(returning: uuid ?? "")
+					continuation.resume(throwing: SigningFileHandlerError.signFailed)
 				}
 			}
 		}
 
 		if let material = appleIDMaterial {
-			try? FileManager.default.removeItem(at: material.p12URL.deletingLastPathComponent())
 			ODAppleIDSignedApps.shared.set(
 				ODAppleIDSignedApps.Info(
-					name: options.appName ?? app.name ?? "App",
+					name: options.appName ?? appSnapshot.name ?? "App",
 					bundleIdentifier: material.bundleIdentifier,
 					expiration: material.expiration,
 					teamID: material.teamID
@@ -208,8 +267,12 @@ final class ODSignPipeline: ObservableObject {
 			ODExpiryReminderScheduler.reschedule()
 		}
 
-		if options.post_deleteAppAfterSigned, !app.isSigned {
-			Storage.shared.deleteApp(for: app)
+		if options.post_deleteAppAfterSigned, !appSnapshot.isSigned, let objectID = appSnapshot.objectID {
+			do {
+				try await Storage.shared.deleteImportedAppAsync(objectID: objectID, uuid: appSnapshot.uuid)
+			} catch {
+				Logger.misc.error("Could not remove the original import after signing (Core Data error code \(error._code)).")
+			}
 		}
 
 		return signedUUID
@@ -294,14 +357,13 @@ final class ODSignPipeline: ObservableObject {
 		}
 	}
 
-	private func _didImport(uuid: String, downloadID: String) {
+	private func _didImport(uuid: String, objectID: NSManagedObjectID, downloadID: String) {
 		guard _pendingGets.remove(downloadID) != nil else { return }
 
-		let request: NSFetchRequest<Imported> = Imported.fetchRequest()
-		request.predicate = NSPredicate(format: "uuid == %@", uuid)
-		request.fetchLimit = 1
-
-		guard let imported = try? Storage.shared.context.fetch(request).first else {
+		guard
+			let imported = try? Storage.shared.context.existingObject(with: objectID) as? Imported,
+			imported.uuid == uuid
+		else {
 			phases[downloadID] = .failed(ODSignError.importFailed.localizedDescription)
 			return
 		}
@@ -316,7 +378,7 @@ final class ODSignPipeline: ObservableObject {
 	// MARK: Revocation
 	private func _freshResult(for cert: CertificatePair) async -> ODOCSPResult? {
 		let store = ODCertificateStatusStore.shared
-		if let result = store.result(for: cert), Date().timeIntervalSince(result.checkedAt) < 3600 {
+		if let result = store.result(for: cert), result.isFresh(maximumAge: 3600) {
 			return result
 		}
 		let action = ODPrefs.revokedAction

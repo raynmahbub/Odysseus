@@ -9,6 +9,8 @@ import SwiftUI
 import NimbleViews
 import Nuke
 import CoreData
+import OSLog
+import NimbleExtensions
 
 // MARK: - View
 struct ResetView: View {
@@ -29,17 +31,27 @@ struct ResetView: View {
 		return "\(ByteCountFormatter.string(fromByteCount: Int64(totalCacheSize), countStyle: .file))"
 	}
 	
+	@MainActor
 	static func resetAlert(
 		title: String,
 		message: String = "",
-		action: @escaping () -> Void
+		action: @escaping @MainActor () async throws -> Void
 	) {
-		let action = UIAlertAction(
+		let alertAction = UIAlertAction(
 			title: .localized("Proceed"),
 			style: .destructive
 		) { _ in
-			action()
-			UIApplication.shared.suspendAndReopen()
+			Task { @MainActor in
+				do {
+					try await action()
+					UIApplication.shared.suspendAndReopen()
+				} catch {
+					UIAlertController.showAlertWithOk(
+						title: .localized("Reset failed"),
+						message: .localized("Odysseus couldn't finish this reset. Completed operations remain in effect. Error: %@", arguments: error.localizedDescription)
+					)
+				}
+			}
 		}
 		
 		let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad
@@ -54,7 +66,7 @@ struct ResetView: View {
 			title: title,
 			message: msg,
 			style: style,
-			actions: [action]
+			actions: [alertAction]
 		)
 	}
 }
@@ -66,7 +78,7 @@ extension ResetView {
 		Section {
 			Button(.localized("Reset Work Cache"), systemImage: "xmark.rectangle.portrait") {
 				Self.resetAlert(title: .localized("Reset Work Cache")) {
-					Self.clearWorkCache()
+					try Self.clearWorkCache()
 				}
 			}
 			
@@ -86,10 +98,10 @@ extension ResetView {
 		Section {
 			Button(.localized("Reset Sources"), systemImage: "xmark.circle") {
 				Self.resetAlert(
-					title: .localized("Reset Signed Apps"),
+					title: .localized("Reset Sources"),
 					message: Storage.shared.countContent(for: AltSource.self)
 				) {
-					Self.resetSources()
+					try await Self.resetSources()
 				}
 			}
 			
@@ -98,7 +110,7 @@ extension ResetView {
 					title: .localized("Reset Signed Apps"),
 					message: Storage.shared.countContent(for: Signed.self)
 				) {
-					Self.deleteSignedApps()
+					try await Self.deleteSignedApps()
 				}
 			}
 			
@@ -107,7 +119,7 @@ extension ResetView {
 					title: .localized("Reset Imported Apps"),
 					message: Storage.shared.countContent(for: Imported.self)
 				) {
-					Self.deleteImportedApps()
+					try await Self.deleteImportedApps()
 				}
 			}
 			
@@ -116,7 +128,7 @@ extension ResetView {
 					title: .localized("Reset Certificates"),
 					message: Storage.shared.countContent(for: CertificatePair.self)
 				) {
-					Self.resetCertificates()
+					try await Self.resetCertificates()
 				}
 			}
 		}
@@ -127,13 +139,13 @@ extension ResetView {
 		Section {
 			Button(.localized("Reset Settings"), systemImage: "xmark.octagon") {
 				Self.resetAlert(title: .localized("Reset Settings")) {
-					Self.resetUserDefaults()
+					try Self.resetUserDefaults()
 				}
 			}
 			
 			Button(.localized("Reset All"), systemImage: "xmark.octagon") {
 				Self.resetAlert(title: .localized("Reset All")) {
-					Self.resetAll()
+					try await Self.resetAll()
 				}
 			}
 		}
@@ -143,61 +155,79 @@ extension ResetView {
 
 // MARK: - View extension: reset
 extension ResetView {
-	static func clearWorkCache() {
+	static func clearWorkCache() throws {
 		let fileManager = FileManager.default
-		let tmpDirectory = fileManager.temporaryDirectory
-		
-		if let files = try? fileManager.contentsOfDirectory(atPath: tmpDirectory.path()) {
-			for file in files {
-				try? fileManager.removeItem(atPath: tmpDirectory.appendingPathComponent(file).path())
-			}
+		let temporaryDirectory = fileManager.temporaryDirectory
+		let files = try fileManager.contentsOfDirectory(
+			at: temporaryDirectory,
+			includingPropertiesForKeys: nil,
+			options: [.skipsHiddenFiles]
+		)
+		for file in files where !file.lastPathComponent.hasPrefix("OdysseusAppleID_") {
+			try fileManager.removeItem(at: file)
 		}
 	}
-	
+
 	static func clearNetworkCache() {
 		URLCache.shared.removeAllCachedResponses()
 		HTTPCookieStorage.shared.removeCookies(since: Date.distantPast)
-		
+
 		if let dataCache = ImagePipeline.shared.configuration.dataCache as? DataCache {
 			dataCache.removeAll()
 		}
-		
+
 		if let imageCache = ImagePipeline.shared.configuration.imageCache as? Nuke.ImageCache {
 			imageCache.removeAll()
 		}
 	}
-	
-	static func resetSources() {
-		Storage.shared.clearContext(request: AltSource.fetchRequest())
+
+	@MainActor
+	static func resetSources() async throws {
+		try await Storage.shared.deleteAllRecords(of: AltSource.self)
 	}
-	
-	static func deleteSignedApps() {
-		Storage.shared.clearContext(request: Signed.fetchRequest())
-		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed)
+
+	@MainActor
+	static func deleteSignedApps() async throws {
+		try await Storage.shared.deleteAllRecords(of: Signed.self, filesAt: FileManager.default.signed)
 	}
-	
-	static func deleteImportedApps() {
-		Storage.shared.clearContext(request: Imported.fetchRequest())
-		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.unsigned)
+
+	@MainActor
+	static func deleteImportedApps() async throws {
+		try await Storage.shared.deleteAllRecords(of: Imported.self, filesAt: FileManager.default.unsigned)
 	}
-	
-	static func resetCertificates(resetAll: Bool = false) {
-		if !resetAll { UserDefaults.standard.set(0, forKey: "feather.selectedCert") }
-		Storage.shared.clearContext(request: CertificatePair.fetchRequest())
-		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.certificates)
+
+	@MainActor
+	static func resetCertificates(resetAll: Bool = false) async throws {
+		try await Storage.shared.deleteAllRecords(of: CertificatePair.self, filesAt: FileManager.default.certificates)
+		if !resetAll {
+			UserDefaults.standard.set(0, forKey: "feather.selectedCert")
+		}
 	}
-	
-	static func resetUserDefaults() {
-		UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
+
+	@MainActor
+	static func resetUserDefaults() throws {
+		guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+			throw ResetOperationError.missingBundleIdentifier
+		}
+		UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
 	}
-	
-	static func resetAll() {
-		clearWorkCache()
+
+	@MainActor
+	static func resetAll() async throws {
+		try clearWorkCache()
 		clearNetworkCache()
-		resetSources()
-		deleteSignedApps()
-		deleteImportedApps()
-		resetCertificates(resetAll: true)
-		resetUserDefaults()
+		try await resetSources()
+		try await deleteSignedApps()
+		try await deleteImportedApps()
+		try await resetCertificates(resetAll: true)
+		try resetUserDefaults()
+	}
+}
+
+private enum ResetOperationError: LocalizedError {
+	case missingBundleIdentifier
+
+	var errorDescription: String? {
+		"The app's bundle identifier is unavailable, so its settings could not be reset."
 	}
 }

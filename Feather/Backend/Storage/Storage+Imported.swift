@@ -8,34 +8,37 @@
 import CoreData
 import UIKit.UIImpactFeedbackGenerator
 
-// MARK: - Class extension: Imported Apps
+// MARK: - Imported Apps
 extension Storage {
-	func addImported(
+	/// Insert and save on a private context. Only the permanent object ID
+	/// crosses back to the caller; the managed object stays on its queue.
+	func addImportedAsync(
 		uuid: String,
 		source: URL? = nil,
-		
 		appName: String? = nil,
 		appIdentifier: String? = nil,
 		appVersion: String? = nil,
 		appIcon: String? = nil,
-		
-		completion: @escaping (Error?) -> Void
-	) {
-		let generator = UIImpactFeedbackGenerator(style: .light)
-		
-		let new = Imported(context: context)
-		
-		new.uuid = uuid
-		new.source = source
-		new.date = Date()
-		// could possibly be nil, but thats fine.
-		new.identifier = appIdentifier
-		new.name = appName
-		new.icon = appIcon
-		new.version = appVersion
-		
-		saveContext()
-		generator.impactOccurred()
-		completion(nil)
+		playsFeedback: Bool = true
+	) async throws -> NSManagedObjectID {
+		try await waitUntilStoreLoaded()
+		let context = makeBackgroundContext()
+		let objectID = try await context.perform {
+			let imported = Imported(context: context)
+			imported.uuid = uuid
+			imported.source = source
+			imported.date = Date()
+			imported.identifier = appIdentifier
+			imported.name = appName
+			imported.icon = appIcon
+			imported.version = appVersion
+			try context.save()
+			return imported.objectID
+		}
+
+		if playsFeedback {
+			UIImpactFeedbackGenerator(style: .light).impactOccurred()
+		}
+		return objectID
 	}
 }

@@ -9,15 +9,13 @@ import Foundation
 import Zsign
 import UIKit
 import OSLog
+import NimbleExtensions
 
 final class SigningHandler: NSObject {
 	private let _fileManager = FileManager.default
 	private let _uuid = UUID().uuidString
 	private var _movedAppPath: URL?
-	// using uuid string is the best way to find the
-	// app we want to sign, it does not matter what
-	// type of app it is
-	private var _app: AppInfoPresentable
+	private let _sourceAppURL: URL
 	private var _options: Options
 	private let _uniqueWorkDir: URL
 	// the options struct is not gonna decode these so
@@ -26,18 +24,17 @@ final class SigningHandler: NSObject {
 	// icon. If the cert pair is not there, fallback
 	// to adhoc signing (if the option is on, otherwise
 	// throw an error
-	var appIcon: UIImage?
-	var appCertificate: CertificatePair?
-	/// Odysseus: sign with these files instead of `appCertificate`
-	/// (used for Apple ID signing, where the profile is made per app).
+	var appIconData: Data?
+	/// Imported certificate or per-app Apple ID material, all snapshotted
+	/// on the main actor before this handler is detached.
 	var signingOverride: ODSigningOverride?
 
 	/// UUID of the Signed record this handler creates, so callers can
 	/// locate the freshly-signed app once `addToDatabase` has run.
 	var signedUUID: String { _uuid }
 
-	init(app: AppInfoPresentable, options: Options = OptionsManager.shared.options) {
-		self._app = app
+	init(sourceAppURL: URL, options: Options = OptionsManager.shared.options) {
+		self._sourceAppURL = sourceAppURL
 		self._options = options
 		self._uniqueWorkDir = _fileManager.temporaryDirectory
 			.appendingPathComponent("FeatherSigning_\(_uuid)", isDirectory: true)
@@ -45,17 +42,15 @@ final class SigningHandler: NSObject {
 	}
 	
 	func copy() async throws {
-		guard let appUrl = Storage.shared.getAppDirectory(for: _app) else {
+		guard _fileManager.fileExists(atPath: _sourceAppURL.path) else {
 			throw SigningFileHandlerError.appNotFound
 		}
 
 		try _fileManager.createDirectoryIfNeeded(at: _uniqueWorkDir)
-		
-		let movedAppURL = _uniqueWorkDir.appendingPathComponent(appUrl.lastPathComponent)
-		
-		try _fileManager.copyItem(at: appUrl, to: movedAppURL)
+		let movedAppURL = _uniqueWorkDir.appendingPathComponent(_sourceAppURL.lastPathComponent)
+		try _fileManager.copyItem(at: _sourceAppURL, to: movedAppURL)
 		_movedAppPath = movedAppURL
-		Logger.misc.info("[\(self._uuid)] Moved Payload to: \(movedAppURL.path)")
+		Logger.misc.info("[\(self._uuid)] Signing input copied to isolated work directory.")
 	}
 	
 	func modify() async throws {
@@ -64,9 +59,8 @@ final class SigningHandler: NSObject {
 		}
 		
 		guard
-			let infoDictionary = NSDictionary(
-				contentsOf: movedAppPath.appendingPathComponent("Info.plist")
-			)!.mutableCopy() as? NSMutableDictionary
+			let sourceInfoDictionary = NSDictionary(contentsOf: movedAppPath.appendingPathComponent("Info.plist")),
+			let infoDictionary = sourceInfoDictionary.mutableCopy() as? NSMutableDictionary
 		else {
 			throw SigningFileHandlerError.infoPlistNotFound
 		}
@@ -80,7 +74,7 @@ final class SigningHandler: NSObject {
 		
 		try await _modifyDict(using: infoDictionary, with: _options, to: movedAppPath)
 		
-		if let icon = appIcon {
+		if let appIconData, let icon = UIImage(data: appIconData) {
 			try await _modifyDict(using: infoDictionary, for: icon, to: movedAppPath)
 		}
 		
@@ -110,31 +104,33 @@ final class SigningHandler: NSObject {
 		// iOS "26" (19) needs special treatment
 		try await _locateMachosAndFixupArm64eSlice(for: movedAppPath)
 		
-		let handler = ZsignHandler(appUrl: movedAppPath, options: _options, cert: appCertificate, identityOverride: signingOverride)
+		let handler = ZsignHandler(appUrl: movedAppPath, options: _options, identityOverride: signingOverride)
 		try await handler.disinject()
-		
-		if
-			_options.signingOption == .default,
-			appCertificate != nil || signingOverride != nil
-		{
+
+		if _options.signingOption == .default, signingOverride != nil {
 			try await handler.sign()
-//		} else if _options.signingOption == .adhoc {
-//			try await handler.adhocSign()
 		} else if _options.signingOption == .onlyModify {
-			//
+			// Modification without a signing identity remains an explicit option.
 		} else {
 			throw SigningFileHandlerError.missingCertifcate
 		}
-		
-		try await self.move()
-		try await self.addToDatabase()
-		
-		if let error = handler.hadError {
+
+		let destinationURL = try await move()
+		do {
+			try await addToDatabase()
+		} catch {
+			// A failed database save must not leave a Signed-folder app that
+			// appears successful but has no corresponding Library record.
+			do {
+				try _fileManager.removeItem(at: destinationURL)
+			} catch {
+				Logger.misc.error("Could not remove signed files after a failed Library save (error code \(error._code)).")
+			}
 			throw error
 		}
 	}
-	
-	func move() async throws {
+
+	func move() async throws -> URL {
 		guard let movedAppPath = _movedAppPath else {
 			throw SigningFileHandlerError.appNotFound
 		}
@@ -146,33 +142,40 @@ final class SigningHandler: NSObject {
 		destinationURL = destinationURL.appendingPathComponent(movedAppPath.lastPathComponent)
 		
 		try _fileManager.moveItem(at: movedAppPath, to: destinationURL)
-		Logger.misc.info("[\(self._uuid)] Moved App to: \(destinationURL.path)")
-		
+		Logger.misc.info("[\(self._uuid)] Signed app moved to Library storage.")
+
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
+		return destinationURL
 	}
 	
 	func addToDatabase() async throws {
-		let app = try await _directory()
-		
-		guard let appUrl = _fileManager.getPath(in: app, for: "app") else {
-			return
+		let signedDirectory = try await _directory()
+		guard let appURL = _fileManager.getPath(in: signedDirectory, for: "app") else {
+			throw SigningFileHandlerError.appNotFound
 		}
-		
-		await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-			let bundle = Bundle(url: appUrl)
-			
-			Storage.shared.addSigned(
-				uuid: _uuid,
-				certificate: (_options.signingOption != .default || signingOverride != nil) ? nil : appCertificate,
-				appName: bundle?.name,
-				appIdentifier: bundle?.bundleIdentifier,
-				appVersion: bundle?.version,
-				appIcon: bundle?.iconFileName
-			) { _ in
-				Logger.signing.info("[\(self._uuid)] Added to database")
-				continuation.resume()
-			}
+
+		guard
+			let bundle = Bundle(url: appURL),
+			let appIdentifier = bundle.bundleIdentifier,
+			!appIdentifier.isEmpty
+		else {
+			throw SigningFileHandlerError.infoPlistNotFound
 		}
+		let appName = bundle.name
+		let appVersion = bundle.version
+		guard !appName.isEmpty, !appVersion.isEmpty else {
+			throw SigningFileHandlerError.infoPlistNotFound
+		}
+		let certificateUUID = _options.signingOption == .default ? signingOverride?.certificateUUID : nil
+		_ = try await Storage.shared.addSignedAsync(
+			uuid: _uuid,
+			certificateUUID: certificateUUID,
+			appName: appName,
+			appIdentifier: appIdentifier,
+			appVersion: appVersion,
+			appIcon: bundle.iconFileName
+		)
+		Logger.signing.info("[\(self._uuid)] Added signed app record.")
 	}
 	
 	private func _directory() async throws -> URL {
@@ -447,6 +450,11 @@ enum SigningFileHandlerError: Error, LocalizedError {
 	case missingCertifcate
 	case disinjectFailed
 	case signFailed
+	case signCallbackMissing
+	case signatureCheckFailed
+	case appIdentifierNotFound
+	case invalidInstallationURL
+	case appMetadataNotFound
 	
 	var errorDescription: String? {
 		switch self {
@@ -455,6 +463,11 @@ enum SigningFileHandlerError: Error, LocalizedError {
 		case .missingCertifcate: "No certificate was specified."
 		case .disinjectFailed: "Removing mach-O load paths failed."
 		case .signFailed: "Signing failed."
+		case .signCallbackMissing: "The signing engine did not report completion."
+		case .signatureCheckFailed: "Zsign did not confirm that the app's main executable contains a signature."
+		case .appIdentifierNotFound: "The app's bundle identifier is missing, so installation progress can't be tracked."
+		case .invalidInstallationURL: "The local installation URL could not be created."
+		case .appMetadataNotFound: "The app is missing its name, bundle identifier, or version required for installation."
 		}
 	}
 }

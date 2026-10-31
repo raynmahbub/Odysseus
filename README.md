@@ -50,7 +50,6 @@ Apple ID signing uses **SideSign** from SideStore / Catalyst, vendored in [`Side
 - [zsign](https://github.com/zhlynn/zsign): on-device signing
 - [idevice](https://github.com/jkcoxson/idevice): installs over the pairing file
 - [Vapor](https://github.com/vapor/vapor), [Nuke](https://github.com/kean/Nuke), [Zip](https://github.com/marmelroy/Zip), [SWCompression](https://github.com/tsolomko/SWCompression)
-- [backloop.dev](https://backloop.dev/): localhost SSL for the local install server
 - [plistserver](https://github.com/nekohaxx/plistserver): hosted at api.palera.in
 - [LiveContainer](https://github.com/LiveContainer/LiveContainer): Mach-O fixes
 - [Asspp](https://github.com/Lakr233/Asspp): server setup code

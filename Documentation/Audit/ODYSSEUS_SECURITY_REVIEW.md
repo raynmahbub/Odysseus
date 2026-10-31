@@ -43,6 +43,7 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 ### S-02 — Certificate import is silent: no confirmation, no authentication, and it can become the default identity
 - **Severity:** High · **Threat:** T1/T2 · **Status:** confirmed in source
 - **Remediation 01 (2026-10-31): still open — deliberately deferred.** Fixing it changes the import flow for every deep link and deserves its own change. It is the first item in `REMEDIATION_01_REPORT.md` §7.
+- **Remediation 02 (2026-10-31): fixed.** `FeatherApp` now parses the link, proves the password opens the `.p12`, and shows an `Import Certificate?` confirmation naming the profile and team before anything is stored; Cancel discards the staged copies. See `REMEDIATION_02_REPORT.md` §3.
 - **Evidence:** `FeatherApp.swift:97–144` decodes `p12`/`mobileprovision`/`password` from the URL and calls `FR.handleCertificateFiles(...)` with no prompt. `ODSignPipeline.defaultCertificate` (`:98–102`) falls back to `certificates.first` when no default is set.
 - **Impact:** a link can install an attacker's signing identity on the device without the user seeing anything beyond an alert on success; if the user had no certificate, the next install is signed with it. The user believes they signed with their own identity.
 - **Fix:** require explicit confirmation naming the certificate subject/team and the source; never auto-select a non-user-confirmed certificate as default; require the device to be unlocked (already implied by keychain class, not by the flow); log the import in diagnostics.
@@ -50,7 +51,8 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-03 — Certificate material at rest is unprotected, and `Documents/` is user-visible
 - **Severity:** High · **Threat:** T6 · **Status:** confirmed in source
-- **Remediation 01 (2026-10-31): password fixed, file storage still open.** The password moved to the keychain with a read-time migration; the `.p12` tree, `UIFileSharingEnabled` and backup inclusion are unchanged. See `REMEDIATION_01_REPORT.md` §3.2.
+- **Remediation 01 (2026-10-31): password fixed, file storage still open.** The password moved to the keychain with a read-time migration; the `.p12` tree, `UIFileSharingEnabled` and backup inclusion were unchanged.
+- **Remediation 02 (2026-10-31): file storage fixed.** Material moved to `Application Support/Odysseus/Certificates` (not user-visible), with `completeUntilFirstUserAuthentication`, owner-only permissions, backup exclusion and a one-time migration; temporary import copies are deleted on every exit path. The files are protected, **not** app-encrypted. See `REMEDIATION_02_REPORT.md` §3.
 - **Evidence:** `Storage+Certificate.swift:30` (`password` plain attribute), `CertificateFileHandler.copy()` (`:47–59`, copies into `Documents/Feather/Certificates/<UUID>/` with the default protection class and no `isExcludedFromBackup`), `Info.plist:106` `UIFileSharingEnabled = true`. Contrast `ODLocalServerTLS.swift:102–106, 228–232`, which correctly applies `0o700`/`0o600`, protection and backup exclusion to *its* identity — the pattern exists in this codebase, it was simply not applied to the user's certificate store.
 - **Impact:** the private key and its password are readable by anyone who can browse Files/iTunes file sharing, and both are included in device backups (so they travel to iCloud and to any computer that restores the backup). File protection is whatever the class default is — on a locked device after first unlock, that is not sufficient for key material.
 - **Fix:** keychain for the password (roadmap ODY-102), `completeUntilFirstUserAuthentication` + `isExcludedFromBackup` on the directory, and stop exposing `Documents/` (move to `Application Support` with file sharing disabled, or expose only an explicitly shared folder).
@@ -58,7 +60,8 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-04 — The install server listens on all interfaces with no authentication
 - **Severity:** Medium · **Threat:** T3 · **Status:** confirmed in source
-- **Remediation 01 (2026-10-31): partially fixed.** `NSLocalNetworkUsageDescription` added; routes moved under a per-install 128-bit secret; the server stops at terminal install state. The bind address is intentionally unchanged because the Semi Local transport serves the manifest over the LAN. See `REMEDIATION_01_REPORT.md` §3.3.
+- **Remediation 01 (2026-10-31): partially fixed.** `NSLocalNetworkUsageDescription` added; routes moved under a per-install 128-bit secret; the server stops at terminal install state. The bind address was intentionally unchanged because the Semi Local transport serves the manifest over the LAN.
+- **Remediation 02 (2026-10-31): narrowed.** The listener binds the address the manifest advertises (LAN IPv4, or loopback) instead of `0.0.0.0`; requests must be `GET` and, when a `Host` is sent, must name this server; the listener stops on dismiss, after payload delivery, and on a 10-minute cap. **Residual:** a fully-local TLS identity configured with a DNS name still binds `0.0.0.0`. See `REMEDIATION_02_REPORT.md` §3.
 - **Evidence:** `ServerInstaller+TLS.swift:36` (`.hostname("0.0.0.0", port:)`), `ServerInstaller.swift:79–110` (four routes: manifest plist, two icons, payload), no token, no per-session secret, no rate limit; port is random per launch (`ServerInstaller.swift:25`), which is obscurity, not control.
 - **Impact:** while an install is in progress, any host on the same network can fetch the manifest and the IPA payload, learning bundle id, name, and the binary itself. The random port narrows the window but is enumerable.
 - **Fix:** bind loopback unless the selected transport requires LAN; add a per-install random path token; stop the server immediately after the install completes (already attempted — verify `_shutdownServer`), and surface a LAN-mode warning.
@@ -182,10 +185,10 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 | Finding | Status after Remediation 01 | Evidence |
 |---|---|---|
-| S-01 | Partially fixed — encoding, biometric gate, destination disclosure; url-borne secret remains | `ODCertificateExport`, `ODDeviceAuthentication`, `FR.swift`; `ODCertificateExportTests` |
-| S-02 | Open | — |
-| S-03 | Password fixed (keychain + migration); files, file sharing and backup exposure open | `ODCertificatePasswordStore`, `Storage+Certificate`; `ODCertificateSecretStorageTests` |
-| S-04 | Partially fixed — declaration, per-install route secret, terminal stop; binding unchanged by design | `ODInstallRouteSet`, `ServerInstaller`, `Info.plist`; `ODInstallRouteSetTests` |
+| S-01 | Partially fixed — encoding, biometric gate, destination disclosure, re-importable format; url-borne secret remains | `ODCertificateExport`, `ODDeviceAuthentication`, `FR.swift`; `ODCertificateExportTests`, `ODCertificateImportLinkTests` |
+| S-02 | **Fixed** (Remediation 02) — confirmation before an import is stored | `FeatherApp._handleCertificateImportURL` |
+| S-03 | **Fixed** (Remediation 02) — password in the keychain, key material out of `Documents/`, protected and excluded from backup; not app-encrypted | `ODCertificatePasswordStore`, `ODCertificateFiles`; `ODCertificateSecretStorageTests`, `ODCertificateFilesTests` |
+| S-04 | Partially fixed — declaration, per-install route secret, **address-scoped bind**, GET/Host guard, bounded lifetime; TLS-with-DNS-name still binds all interfaces | `ODInstallRouteSet`, `ODInstallServerAccess`, `ServerInstaller`; `ODInstallRouteSetTests`, `ODInstallServerAccessTests` |
 | S-05 | Open | — |
 | S-06 | Open | — |
 | S-07 | Open | — |
@@ -196,4 +199,4 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 | S-12 | Open | — |
 | S-13 | Fixed | `Storage+Certificate.deleteCertificate(for:)`; `ODCertificateSecretStorageTests` |
 
-The release gate in §6 is unchanged and still blocks distribution on S-01 (url-borne secret), S-02, S-03 (files), S-08 and missing device verification.
+The release gate in §6 still blocks distribution on S-01 (url-borne secret), S-08 and missing device verification. S-02 and S-03 are closed in code as of Remediation 02; both still need the device checks in `REMEDIATION_02_REPORT.md` §7.

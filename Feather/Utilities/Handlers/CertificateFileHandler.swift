@@ -7,6 +7,7 @@
 
 import Foundation
 import OSLog
+import NimbleExtensions
 
 final class CertificateFileHandler: NSObject {
 	private let _fileManager = FileManager.default
@@ -50,12 +51,24 @@ final class CertificateFileHandler: NSObject {
 		else {
 			throw CertificateFileHandlerError.certNotValid
 		}
-		
+
 		let destinationURL = try await _directory()
 
-		try _fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-		try _fileManager.copyItem(at: _key, to: destinationURL.appendingPathComponent(_key.lastPathComponent))
-		try _fileManager.copyItem(at: _provision, to: destinationURL.appendingPathComponent(_provision.lastPathComponent))
+		let copiedKey = destinationURL.appendingPathComponent(_key.lastPathComponent)
+		let copiedProvision = destinationURL.appendingPathComponent(_provision.lastPathComponent)
+		do {
+			try _fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+			try _fileManager.copyItem(at: _key, to: copiedKey)
+			try _fileManager.copyItem(at: _provision, to: copiedProvision)
+		} catch {
+			// A half-copied directory must not survive a failed import.
+			try? ODCertificateFiles.removeDirectory(for: _uuid)
+			throw error
+		}
+
+		// The `.p12` holds the signing private key: owner-only permissions,
+		// `completeUntilFirstUserAuthentication`, and no backup.
+		ODCertificateFiles.protect(directory: destinationURL)
 	}
 	
 	@MainActor
@@ -83,16 +96,36 @@ final class CertificateFileHandler: NSObject {
 
 	/// Removes the copied `.p12`/profile when the database write failed, so a
 	/// failed import cannot leave key material behind without a record.
+	///
+	/// Only the directory this import created is removed; `ODCertificateFiles`
+	/// refuses anything that is not a direct child of the certificate root.
 	func cleanup() {
-		try? FileManager.default.removeItem(at: FileManager.default.certificates(_uuid))
+		do {
+			try ODCertificateFiles.removeDirectory(for: _uuid)
+		} catch {
+			Logger.misc.error("Could not remove the files of a failed certificate import (error code \(error._code)).")
+		}
 	}
-	
+
 	private func _directory() async throws -> URL {
-		// Documents/Feather/Certificates/\(UUID)
-		_fileManager.certificates(_uuid)
+		do {
+			return try ODCertificateFiles.directory(for: _uuid)
+		} catch {
+			throw CertificateFileHandlerError.invalidDestination
+		}
 	}
 }
 
-private enum CertificateFileHandlerError: Error {
+enum CertificateFileHandlerError: LocalizedError {
 	case certNotValid
+	case invalidDestination
+
+	var errorDescription: String? {
+		switch self {
+		case .certNotValid:
+			return .localized("This provisioning profile couldn't be read, so the certificate wasn't imported.")
+		case .invalidDestination:
+			return .localized("Odysseus couldn't find a safe place to store this certificate, so nothing was imported.")
+		}
+	}
 }

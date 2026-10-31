@@ -31,9 +31,19 @@ extension ServerInstaller {
 			app.http.server.configuration.tlsConfiguration = try tls()
 		}
 
+		// Bind the same address the manifest advertises instead of every
+		// interface. See `ODInstallServerAccess.bindHost` for the one case
+		// (a custom TLS DNS name) that still has to listen on all of them.
+		let bindHost = ODInstallServerAccess.bindHost(
+			serverMethod: getServerMethod(),
+			usesLoopbackFix: getIPFix(),
+			localAddress: Self.getLocalAddress(),
+			tlsHostname: ODLocalServerTLS.hostname
+		)
+
 		app.http.server.configuration.hostname = sni()
 		app.http.server.configuration.tcpNoDelay = true
-		app.http.server.configuration.address = .hostname("0.0.0.0", port: port)
+		app.http.server.configuration.address = .hostname(bindHost, port: port)
 		app.http.server.configuration.port = port
 		app.routes.defaultMaxBodySize = "128mb"
 		app.routes.caseInsensitive = false

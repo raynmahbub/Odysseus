@@ -12,7 +12,8 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-001 — Certificate export writes an unencoded password into a URL
 - **Severity:** High · **Area:** certificates · **Status:** confirmed in source
-- **Remediation 01 (2026-10-31):** fixed the encoding, added a Face ID/passcode gate and a destination disclosure (`ODCertificateExport`, `ODDeviceAuthentication`); the raw-vs-base64 exporter/importer mismatch is **still open**. See `REMEDIATION_01_REPORT.md` §3.1.
+- **Remediation 01 (2026-10-31):** fixed the encoding, added a Face ID/passcode gate and a destination disclosure (`ODCertificateExport`, `ODDeviceAuthentication`); the raw-vs-base64 exporter/importer mismatch was left open.
+- **Remediation 02 (2026-10-31):** the format mismatch is **fixed** — the exporter can emit `$(BASE64_PASSWORD)`/`$(BASE64_PROVISION)` and the importer accepts both encodings through one tested parser, with the `.p12` deciding which password is correct. See `REMEDIATION_02_REPORT.md` §3.
 - **Files:** `Feather/Utilities/FR.swift:164–223` (template substitution at `:185`, `UIApplication.open` at `:189`), consumed by `Feather/FeatherApp.swift:97–144` and `Feather/Views/Settings/SettingsView.swift:220–231`
 - **Root cause:** the export takes a caller-supplied template (documented example: `livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)`) and substitutes both values by string interpolation (`:183–185`). The certificate is percent-encoded; the password is not encoded at all.
 - **Impact:** any password containing `&`, `+`, `#`, `%`, `?` or a space truncates or corrupts the import on the receiving side — the exported backup silently fails to restore. There is a second, independent defect on the same path: the exporter writes the password **raw**, while Odysseus's own importer (`FeatherApp.swift:104–108`) expects it **base64-encoded**, so exporting from Odysseus and importing back into Odysseus cannot work for any password. The template comment (`FeatherApp.swift:148–150`) documents the raw-password form because the feature was built for LiveContainer's importer, not this app's. Independently, the credential is exposed in a URL (see `ODYSSEUS_SECURITY_REVIEW.md` S-01/S-02).
@@ -198,12 +199,12 @@ Recorded so it is not re-audited:
 
 | ID | Status | Where |
 |---|---|---|
-| ODY-BUG-001 | Partially fixed (encoding + gate + destination; format mismatch open) | `ODCertificateExport.swift`, `FR.swift` |
+| ODY-BUG-001 | **Fixed** (Remediation 02 closed the format mismatch) | `ODCertificateExport.swift`, `ODCertificateImportLink.swift`, `FR.swift`, `FeatherApp.swift` |
 | ODY-BUG-002 | Fixed | `DownloadManager.swift` |
 | ODY-BUG-003 | Fixed | `DownloadManager.swift`, `ODSignPipeline.importFailed` |
 | ODY-BUG-004 | Fixed | `ODImportTracking.swift`, `ODSignPipeline.swift` |
 | ODY-BUG-005 | Open (needs device validation) | — |
-| ODY-BUG-006 | Fixed | `Storage+Certificate.deleteCertificate` |
+| ODY-BUG-006 | Fixed, and hardened in Remediation 02 (removal restricted to the certificate root) | `Storage+Certificate.deleteCertificate`, `ODCertificateFiles` |
 | ODY-BUG-007 | Open | — |
 | ODY-BUG-008 / 009 / 010 | Open | — |
 | ODY-BUG-011 – 015 | Open | — |
@@ -211,4 +212,4 @@ Recorded so it is not re-audited:
 | ODY-BUG-017 | Open | — |
 | T-01 … T-08 | Theoretical, untouched | — |
 
-Test coverage for the fixed defects lives in `ODCertificateExportTests`, `ODCertificateSecretStorageTests`, `ODImportTrackingTests` and `ODInstallRouteSetTests`. **None of those tests has been executed**; this environment cannot build the project (`REMEDIATION_01_REPORT.md` §5).
+Test coverage for the fixed defects lives in `ODCertificateExportTests`, `ODCertificateImportLinkTests`, `ODCertificateFilesTests`, `ODCertificateSecretStorageTests`, `ODImportTrackingTests`, `ODInstallRouteSetTests` and `ODInstallServerAccessTests`. **None of those tests has been executed**; this environment cannot build the project (`REMEDIATION_01_REPORT.md` §5).

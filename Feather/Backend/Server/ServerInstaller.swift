@@ -30,6 +30,12 @@ class ServerInstaller: Identifiable, ObservableObject {
 	let routeSet: ODInstallRouteSet
 	let port = Int.random(in: 4000...8000)
 	private var _needsShutdown = false
+	private var _lifetimeTask: Task<Void, Never>?
+
+	/// Longest an install server may stay up. A payload is streamed in
+	/// seconds; this exists so a cancelled or forgotten install cannot leave a
+	/// listener running indefinitely.
+	static let maximumLifetime: TimeInterval = 10 * 60
 	
 	var packageUrl: URL?
 	let app: ServerAppSnapshot
@@ -51,6 +57,7 @@ class ServerInstaller: Identifiable, ObservableObject {
 		do {
 			try server.server.start()
 			_needsShutdown = true
+			_startLifetimeTimer()
 		} catch {
 			server.shutdown()
 			throw error
@@ -79,36 +86,47 @@ class ServerInstaller: Identifiable, ObservableObject {
 	}
 	
 	deinit {
+		_lifetimeTask?.cancel()
 		_shutdownServer()
 	}
 	
 	private func _configureRoutes() {
 		_server?.get("*") { [weak self] req in
 			guard let self else { return Response(status: .badGateway) }
-			let path = req.url.path
-			let routes = self.routeSet
 
-			if path == routes.plistPath {
+			// Only GET is served, and a request that names a host must name
+			// this server. Unknown, unauthenticated and secret-less paths all
+			// get the same answer, so the server does not confirm what exists.
+			guard
+				ODInstallServerAccess.isAcceptableRequest(
+					method: req.method.rawValue,
+					hostHeader: req.headers[.host].first,
+					expectedHost: self.sni()
+				),
+				let route = self.routeSet.route(for: req.url.path)
+			else {
+				return Response(status: .notFound)
+			}
+
+			switch route {
+			case .manifest:
 				self._updateStatus(.sendingManifest)
 				return Response(status: .ok, version: req.version, headers: [
 					"Content-Type": "text/xml",
-				], body: .init(data: installManifestData))
-			}
+				], body: .init(data: self.installManifestData))
 
-			if path == routes.smallImagePath {
+			case .smallIcon:
 				return Response(status: .ok, version: req.version, headers: [
 					"Content-Type": "image/png",
-				], body: .init(data: displayImageSmallData))
-			}
+				], body: .init(data: self.displayImageSmallData))
 
-			if path == routes.largeImagePath {
+			case .largeIcon:
 				return Response(status: .ok, version: req.version, headers: [
 					"Content-Type": "image/png",
-				], body: .init(data: displayImageLargeData))
-			}
+				], body: .init(data: self.displayImageLargeData))
 
-			if path == routes.payloadPath {
-				guard let packageUrl = packageUrl else {
+			case .payload:
+				guard let packageUrl = self.packageUrl else {
 					return Response(status: .notFound)
 				}
 
@@ -120,27 +138,50 @@ class ServerInstaller: Identifiable, ObservableObject {
 					switch result {
 					case .success:
 						self._updateStatus(.installing)
+						// The payload is delivered; nothing else is served
+						// from this listener, so it can go away shortly.
+						self._stopAfterPayloadDelivered()
 					case .failure(let error):
 						self._updateStatus(.broken(error))
 					}
-
 				}
-			}
 
-			if path == routes.installPath {
+			case .installPage:
 				var headers = HTTPHeaders()
 				headers.add(name: .contentType, value: "text/html")
 				return Response(status: .ok, headers: headers, body: .init(string: self.html))
 			}
-
-			return Response(status: .notFound)
 		}
 	}
 
-	/// Stops the listener. Called when the install reaches a terminal state so
-	/// the server does not outlive the install that needed it.
+	/// Stops the listener a short while after the payload has been delivered,
+	/// so the last bytes can drain before the socket closes.
+	private func _stopAfterPayloadDelivered() {
+		DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+			self?.stop()
+		}
+	}
+
+	private func _startLifetimeTimer() {
+		_lifetimeTask?.cancel()
+		_lifetimeTask = Task { @MainActor [weak self] in
+			try? await Task.sleep(nanoseconds: UInt64(Self.maximumLifetime * 1_000_000_000))
+			guard !Task.isCancelled else { return }
+			self?.stop()
+		}
+	}
+
+	/// Stops the listener.
+	///
+	/// Called when the install reaches a terminal state, when the payload has
+	/// been delivered, when the install UI goes away, and when the lifetime
+	/// timer expires — so the server never outlives the install that needed it.
 	func stop() {
-		_shutdownServer()
+		_lifetimeTask?.cancel()
+		_lifetimeTask = nil
+		DispatchQueue.main.async { [weak self] in
+			self?._shutdownServer()
+		}
 	}
 
 	private func _shutdownServer() {

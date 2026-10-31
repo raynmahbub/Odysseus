@@ -211,9 +211,9 @@ No third-party code was copied; no licence or notice file changed; no dependency
 | Risk | Why it remains | Severity |
 |---|---|---|
 | Certificate still leaves the app inside a URL | Inherent to the export design the feature was built for; the destination is now shown and gated, but the secret is still in a URL | Medium |
-| Export → import round trip remains incompatible (raw vs base64 password) | Changing either side breaks an external consumer; needs a contract decision | Medium |
-| `.p12` files unprotected, `Documents/` exposed, backed up | Separate file-tree migration | High |
-| Install server reachable on the LAN during an install | Binding retained for the supported transport; secret only prevents enumeration | Medium |
+| Export → import round trip remains incompatible (raw vs base64 password) | **Closed in Remediation 02** — both encodings accepted, profile emitted, single decode | — |
+| `.p12` files unprotected, `Documents/` exposed, backed up | **Closed in Remediation 02** — moved to `Application Support`, protected, excluded from backup, one-time migration | — |
+| Install server reachable on the LAN during an install | **Narrowed in Remediation 02** — binds the advertised address, GET/Host guard, bounded lifetime; LAN reach during an install remains by design | Low |
 | The secret-bearing payload URL is sent to the configured external plist service | `externalServerLink` posts `fetchurl=<payload url>` to `api.palera.in` (or a custom server) whenever that mode is selected. Pre-existing behaviour, not made worse — the old URL was guessable — but the secret now leaves the device | Low |
 | No nonce on OCSP requests, 1-hour trust window | Untouched (S-06) | Medium |
 | Unpinned dependencies, four AGPL packages | Untouched (L-01/L-02) | High |
@@ -222,10 +222,12 @@ No third-party code was copied; no licence or notice file changed; no dependency
 
 ## 7. Recommended next remediation
 
-1. **S-02 / silent certificate import** — require an explicit, named confirmation before `odysseus://import-certificate` stores an identity, and stop letting an unconfirmed certificate become the default. Small, self-contained, and the last priority-1 item.
-2. **Resolve the export/import password contract** — pick one encoding, document it in the deep-link comment, and make importer and exporter agree (S-01 follow-up).
-3. **Certificate directory hardening** — move key material out of `Documents/`, apply `completeUntilFirstUserAuthentication`, exclude from backup, and turn off or narrow `UIFileSharingEnabled` (S-03 remainder).
+1. ~~**S-02 / silent certificate import**~~ — done in Remediation 02.
+2. ~~**Resolve the export/import password contract**~~ — done in Remediation 02.
+3. ~~**Certificate directory hardening**~~ — done in Remediation 02 (file-sharing is still enabled for IPAs; only certificate material moved).
 4. **ODY-BUG-005** — register background tasks before launch with a fixed identifier. This one cannot be validated without a device and should carry a device test with it.
 5. **Dependency pinning + notices** (L-01/L-02) — mechanically simple, release-blocking for distribution.
+
+See `REMEDIATION_02_REPORT.md` for what was closed and what still needs a device.
 
 Each is deliberately *not* part of this patch so it can be reviewed and reverted independently.

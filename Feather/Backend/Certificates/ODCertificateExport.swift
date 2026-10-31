@@ -33,19 +33,58 @@ enum ODCertificateExport {
 
 	/// Substitutes the placeholders into the template and validates the result.
 	///
+	/// The certificate placeholder, without which a template is not usable.
+	static let certificatePlaceholder = "$(BASE64_CERT)"
+
+	/// Resolves the `callback_template` of an export deep link.
+	///
+	/// `URLComponents` has already decoded the value once. A second decode is
+	/// only applied when the first value does not contain the certificate
+	/// placeholder — that keeps working with callers that double-encode, while
+	/// a template that legitimately contains `%` (a percent-encoded query value
+	/// inside the destination) is no longer corrupted or silently discarded.
+	static func resolveTemplate(_ raw: String?) -> String? {
+		guard let raw else {
+			return nil
+		}
+		if raw.contains(certificatePlaceholder) {
+			return raw
+		}
+		if
+			let decoded = raw.removingPercentEncoding,
+			decoded != raw,
+			decoded.contains(certificatePlaceholder)
+		{
+			return decoded
+		}
+		return raw
+	}
+
 	/// `$(BASE64_CERT)` is required — without it nothing would be exported.
-	/// `$(PASSWORD)` is optional so a caller that only wants the archive still
-	/// works.
+	///
+	/// The other placeholders are optional:
+	///
+	/// | Placeholder | Value |
+	/// |---|---|
+	/// | `$(PASSWORD)` | password, verbatim (percent-encoded for transport) |
+	/// | `$(BASE64_PASSWORD)` | password, base64 of its UTF-8 bytes |
+	/// | `$(BASE64_PROVISION)` | provisioning profile, base64 |
+	///
+	/// `$(PASSWORD)` is what external consumers expect, so it keeps working.
+	/// `$(BASE64_PASSWORD)` and `$(BASE64_PROVISION)` are what
+	/// `odysseus://import-certificate` needs to accept the link again; see
+	/// `ODCertificateImportLink`.
 	///
 	/// Returns `nil` when the template is malformed or when the resulting URL
 	/// is too long for `openURL` to handle.
 	static func makeURL(
 		template: String,
 		certificateBase64: String,
-		password: String
+		password: String,
+		provisionBase64: String? = nil
 	) -> URL? {
 		guard
-			template.contains("$(BASE64_CERT)"),
+			template.contains(certificatePlaceholder),
 			let encodedCertificate = encode(certificateBase64)
 		else {
 			return nil
@@ -55,8 +94,20 @@ enum ODCertificateExport {
 			return nil
 		}
 
+		let encodedPasswordBase64 = encode(Data(password.utf8).base64EncodedString())
+		let encodedProvision = encode(provisionBase64 ?? "")
+
+		guard
+			let encodedPasswordBase64,
+			let encodedProvision
+		else {
+			return nil
+		}
+
 		let urlString = template
-			.replacingOccurrences(of: "$(BASE64_CERT)", with: encodedCertificate)
+			.replacingOccurrences(of: certificatePlaceholder, with: encodedCertificate)
+			.replacingOccurrences(of: "$(BASE64_PROVISION)", with: encodedProvision)
+			.replacingOccurrences(of: "$(BASE64_PASSWORD)", with: encodedPasswordBase64)
 			.replacingOccurrences(of: "$(PASSWORD)", with: encodedPassword)
 
 		guard
@@ -69,6 +120,14 @@ enum ODCertificateExport {
 		}
 
 		return url
+	}
+
+	/// Whether the template asks for the provisioning profile.
+	///
+	/// The caller must refuse the export when this is true and no profile is
+	/// available, rather than emitting a link the importer will reject.
+	static func requiresProvision(in template: String) -> Bool {
+		template.contains("$(BASE64_PROVISION)")
 	}
 
 	/// Short, human-readable destination shown in the confirmation alert so

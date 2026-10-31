@@ -105,4 +105,99 @@ final class ODCertificateExportTests: XCTestCase {
 		let url = try XCTUnwrap(URL(string: "odysseus:install"))
 		XCTAssertEqual(ODCertificateExport.destinationDescription(for: url), "odysseus://")
 	}
+
+	// MARK: - Re-import placeholders
+
+	func testProvisionPlaceholderIsSubstituted() throws {
+		let template = "odysseus://import-certificate?p12=$(BASE64_CERT)&mobileprovision=$(BASE64_PROVISION)&password=$(BASE64_PASSWORD)"
+		let profile = Data("<plist/>".utf8).base64EncodedString()
+
+		let url = try XCTUnwrap(
+			ODCertificateExport.makeURL(
+				template: template,
+				certificateBase64: "Y2VydA==",
+				password: "p@ss&word",
+				provisionBase64: profile
+			)
+		)
+
+		let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+		XCTAssertEqual(components.queryItems?.first { $0.name == "mobileprovision" }?.value, profile)
+		XCTAssertFalse(url.absoluteString.contains("$(BASE64_PROVISION)"))
+	}
+
+	func testBase64PasswordPlaceholderIsWhatTheImporterReads() throws {
+		let template = "odysseus://import-certificate?p12=$(BASE64_CERT)&mobileprovision=$(BASE64_PROVISION)&password=$(BASE64_PASSWORD)"
+		let password = "a+b%c&d"
+
+		let url = try XCTUnwrap(
+			ODCertificateExport.makeURL(
+				template: template,
+				certificateBase64: "Y2VydA==",
+				password: password,
+				provisionBase64: "cHJvZmlsZQ=="
+			)
+		)
+
+		let items = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+		let encoded = try XCTUnwrap(items.first { $0.name == "password" }?.value)
+
+		XCTAssertEqual(
+			String(data: try XCTUnwrap(Data(base64Encoded: encoded)), encoding: .utf8),
+			password
+		)
+	}
+
+	func testRawPasswordPlaceholderIsStillSupportedForExternalConsumers() throws {
+		let template = "livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)"
+
+		let url = try XCTUnwrap(
+			ODCertificateExport.makeURL(template: template, certificateBase64: "Y2VydA==", password: "a+b")
+		)
+
+		let items = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+		XCTAssertEqual(items.first { $0.name == "password" }?.value, "a+b")
+	}
+
+	func testRequiresProvisionIsDetected() {
+		XCTAssertTrue(
+			ODCertificateExport.requiresProvision(
+				in: "odysseus://import-certificate?p12=$(BASE64_CERT)&mobileprovision=$(BASE64_PROVISION)"
+			)
+		)
+		XCTAssertFalse(
+			ODCertificateExport.requiresProvision(
+				in: "livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)"
+			)
+		)
+	}
+
+	// MARK: - Callback template resolution
+
+	func testAlreadyDecodedTemplateIsUsedAsIs() {
+		let template = "livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)"
+		XCTAssertEqual(ODCertificateExport.resolveTemplate(template), template)
+	}
+
+	func testEncodedTemplateIsDecodedWhenItLacksThePlaceholder() throws {
+		// A caller that double-encoded the template leaves `URLComponents`
+		// with a value that is still percent-encoded, so the placeholder has
+		// not appeared yet.
+		let template = "livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)"
+		let once = try XCTUnwrap(template.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+
+		XCTAssertFalse(once.contains(ODCertificateExport.certificatePlaceholder))
+		XCTAssertEqual(ODCertificateExport.resolveTemplate(once), template)
+	}
+
+	func testTemplateContainingAPercentValueIsNotCorrupted() {
+		// `URLComponents` already decoded the template; decoding again used to
+		// turn `50%25off` into `50%off` or fail outright.
+		let template = "livecontainer://certificate?cert=$(BASE64_CERT)&name=50%25off"
+		XCTAssertEqual(ODCertificateExport.resolveTemplate(template), template)
+	}
+
+	func testMissingTemplateResolvesToNil() {
+		XCTAssertNil(ODCertificateExport.resolveTemplate(nil))
+	}
 }

@@ -82,7 +82,7 @@ struct ODGetButton: View {
 		}
 		.onAppear(perform: _observe)
 		.onDisappear { _cancellable?.cancel() }
-		.onChange(of: _downloadManager.downloads.count) { _ in _observe() }
+		.onChange(of: _downloadManager.downloads.count) { _, _ in _observe() }
 		.animation(.easeInOut(duration: 0.25), value: _downloadManager.getDownload(by: _id) != nil)
 		.animation(.easeInOut(duration: 0.25), value: _pipeline.phases[_id])
 	}

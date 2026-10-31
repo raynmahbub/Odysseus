@@ -125,10 +125,10 @@ struct SourceAppsView: View {
 			}
 			_sortOption = SortOption(rawValue: _sortOptionRawValue) ?? .default
 		}
-		.onChange(of: viewModel.isFinished) { _ in
+		.onChange(of: viewModel.isFinished) { _, _ in
 			_load()
 		}
-		.onChange(of: _sortOption) { newValue in
+		.onChange(of: _sortOption) { _, newValue in
 			_sortOptionRawValue = newValue.rawValue
 		}
 		.navigationDestinationIfAvailable(item: $_selectedRoute) { route in

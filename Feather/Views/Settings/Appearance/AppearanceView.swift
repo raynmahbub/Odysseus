@@ -89,7 +89,7 @@ struct AppearanceView: View {
 				.pickerStyle(.inline)
 			}
 		}
-		.onChange(of: _userIntefacerStyle) { value in
+		.onChange(of: _userIntefacerStyle) { _, value in
 			if let style = UIUserInterfaceStyle(rawValue: value) {
 				UIApplication.topViewController()?.view.window?.overrideUserInterfaceStyle = style
 			}

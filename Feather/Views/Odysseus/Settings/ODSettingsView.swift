@@ -152,9 +152,9 @@ struct ODSettingsView: View {
 				}
 			}
 			Toggle(.localized("Notify When Status Changes"), isOn: $_notifyOnChange)
-				.onChange(of: _notifyOnChange) { on in if on { ODNotifications.requestAuthorization() } }
+				.onChange(of: _notifyOnChange) { _, on in if on { ODNotifications.requestAuthorization() } }
 			Toggle(.localized("Expiry Reminders"), isOn: $_expiryReminders)
-				.onChange(of: _expiryReminders) { on in
+				.onChange(of: _expiryReminders) { _, on in
 					if on { ODNotifications.requestAuthorization() }
 					ODExpiryReminderScheduler.reschedule()
 				}
@@ -166,7 +166,7 @@ struct ODSettingsView: View {
 						.foregroundStyle(.secondary)
 				}
 			}
-			.onChange(of: _warningDays) { _ in ODExpiryReminderScheduler.reschedule() }
+			.onChange(of: _warningDays) { _, _ in ODExpiryReminderScheduler.reschedule() }
 			Button {
 				_isCheckingAll = true
 				Task {

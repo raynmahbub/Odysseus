@@ -331,13 +331,17 @@ enum ODOCSPChecker {
 
 		guard
 			signer.issuerNameDER == issuer.subjectNameDER,
+			signer.permitsOCSPSigning,
 			let signerCertificate = SecCertificateCreateWithData(nil, signer.der as CFData)
 		else {
 			return false
 		}
+		// SecPolicyCreateOCSPSigner is not part of the public iOS SDK. Validate
+		// the delegate's required EKU/key usage above, then let Security verify
+		// its certificate chain to the supplied issuer and a trusted root.
 		return _isAppleTrusted(
 			[signerCertificate, issuerCertificate],
-			policy: SecPolicyCreateOCSPSigner(),
+			policy: SecPolicyCreateBasicX509(),
 			at: producedAt
 		)
 	}

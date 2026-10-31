@@ -244,7 +244,7 @@ enum ODLocalServerTLS {
 		}
 
 		let privateKey = try NIOSSLPrivateKey(file: privateKeyURL.path, format: .pem)
-		let configuration = try TLSConfiguration.makeServerConfiguration(
+		let configuration = TLSConfiguration.makeServerConfiguration(
 			certificateChain: certificateChain,
 			privateKey: .privateKey(privateKey)
 		)

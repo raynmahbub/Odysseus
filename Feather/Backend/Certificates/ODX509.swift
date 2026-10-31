@@ -26,6 +26,20 @@ struct ODX509 {
 	let caIssuerURLs: [URL]
 	let authorityKeyID: Data?
 	let subjectKeyID: Data?
+	let extendedKeyUsageOIDs: Set<String>
+	/// KeyUsage BIT STRING payload after the unused-bit count, or nil when absent.
+	let keyUsageBits: Data?
+
+	var permitsOCSPSigning: Bool {
+		Self.permitsOCSPSigning(extendedKeyUsageOIDs: extendedKeyUsageOIDs, keyUsageBits: keyUsageBits)
+	}
+
+	static func permitsOCSPSigning(extendedKeyUsageOIDs: Set<String>, keyUsageBits: Data?) -> Bool {
+		guard extendedKeyUsageOIDs.contains("1.3.6.1.5.5.7.3.9") else { return false }
+		guard let keyUsageBits else { return true }
+		guard let first = keyUsageBits.first else { return false }
+		return first & 0x80 != 0 // digitalSignature
+	}
 
 	#if canImport(Security)
 	var commonName: String? {
@@ -81,6 +95,8 @@ struct ODX509 {
 		var caIssuers: [URL] = []
 		var aki: Data?
 		var ski: Data?
+		var extendedKeyUsages = Set<String>()
+		var keyUsageBits: Data?
 
 		if let extWrapper = fields.first(where: { $0.tag == 0xA3 }), let extList = extWrapper.children.first {
 			for ext in extList.children {
@@ -108,6 +124,20 @@ struct ODX509 {
 					aki = inner.children.first(where: { $0.tag == 0x80 })?.value
 				case "2.5.29.14": // subjectKeyIdentifier
 					ski = inner.tag == 0x04 ? inner.value : nil
+				case "2.5.29.15": // keyUsage BIT STRING
+					guard
+						inner.tag == 0x03,
+						let unusedBits = inner.value.first,
+						unusedBits <= 7
+					else {
+						keyUsageBits = Data()
+						continue
+					}
+					keyUsageBits = Data(inner.value.dropFirst())
+				case "2.5.29.37": // extendedKeyUsage
+					if inner.tag == 0x30 {
+						extendedKeyUsages = Set(inner.children.compactMap(ODDER.oidString))
+					}
 				default:
 					break
 				}
@@ -118,6 +148,8 @@ struct ODX509 {
 		caIssuerURLs = caIssuers
 		authorityKeyID = aki
 		subjectKeyID = ski
+		extendedKeyUsageOIDs = extendedKeyUsages
+		self.keyUsageBits = keyUsageBits
 	}
 }
 

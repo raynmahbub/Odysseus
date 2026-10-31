@@ -67,7 +67,7 @@ struct FeatherApp: App {
 					}
 					window?.tintColor = UIColor(Color(hex: UserDefaults.standard.string(forKey: ODPrefs.tintColor) ?? ODTheme.moonlightHex))
 				}
-				.onChange(of: _scenePhase) { phase in
+				.onChange(of: _scenePhase) { _, phase in
 					guard phase == .active, storage.isStoreLoaded else { return }
 					Task { @MainActor in
 						await ODCertificateStatusStore.shared.checkAllIfNeeded()

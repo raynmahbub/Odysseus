@@ -107,7 +107,7 @@ struct SigningView: View {
 				.ignoresSafeArea()
 			}
 			.photosPicker(isPresented: $_isImagePickerPresenting, selection: $_selectedPhoto)
-			.onChange(of: _selectedPhoto) { newValue in
+			.onChange(of: _selectedPhoto) { _, newValue in
 				guard let newValue else { return }
 				
 				Task {

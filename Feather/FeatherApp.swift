@@ -29,7 +29,7 @@ struct FeatherApp: App {
 					ContentUnavailableView(
 						.localized("Library unavailable"),
 						systemImage: "externaldrive.badge.exclamationmark",
-						description: Text(.localized("Odysseus couldn't open its Library database. Existing Library data was preserved. Restart the app and contact the developer if this continues. Error: %@", arguments: error.localizedDescription))
+						description: Text(verbatim: String.localized("Odysseus couldn't open its Library database. Existing Library data was preserved. Restart the app and contact the developer if this continues. Error: %@", arguments: error.localizedDescription))
 					)
 				} else if storage.isStoreLoaded {
 					ODRootView()

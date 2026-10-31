@@ -114,6 +114,11 @@ struct InstallPreviewView: View {
 		.onDisappear {
 			progressTask?.cancel()
 			progressTask = nil
+
+			// Dismissing the sheet is a cancellation: the listener must not
+			// keep running until the object happens to be deallocated.
+			installer.stop()
+
 			
 			#if !targetEnvironment(macCatalyst)
 			BackgroundAudioManager.shared.stop()

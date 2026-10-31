@@ -103,25 +103,49 @@ extension CertificatesAddView {
 // MARK: - Extension: View (import)
 extension CertificatesAddView {
 	private func _saveCertificate() {
-		guard
-			let p12URL = _p12URL,
-			let provisionURL = _provisionURL,
-			FR.checkPasswordForCertificate(for: p12URL, with: _p12Password, using: provisionURL)
-		else {
+		guard let p12URL = _p12URL, let provisionURL = _provisionURL else {
+			UIAlertController.showAlertWithOk(
+				title: .localized("Missing Files"),
+				message: .localized("Choose both a certificate (.p12) and a provisioning profile.")
+			)
+			return
+		}
+
+		// An unreadable profile and a wrong password are different failures;
+		// reporting both as "Bad Password" sent users looking in the wrong
+		// place.
+		guard CertificateReader(provisionURL).decoded != nil else {
+			UIAlertController.showAlertWithOk(
+				title: .localized("Unreadable Profile"),
+				message: .localized("This provisioning profile couldn't be read. Make sure it's a valid .mobileprovision file.")
+			)
+			return
+		}
+
+		guard FR.checkPasswordForCertificate(for: p12URL, with: _p12Password, using: provisionURL) else {
 			UIAlertController.showAlertWithOk(
 				title: .localized("Bad Password"),
 				message: .localized("Please check the password and try again.")
 			)
 			return
 		}
-		
+
 		FR.handleCertificateFiles(
 			p12URL: p12URL,
 			provisionURL: provisionURL,
 			p12Password: _p12Password,
 			certificateName: _certificateName
-		) { _ in
-			dismiss()
+		) { error in
+			// The sheet used to close whether or not the import worked, so a
+			// failed import looked like a successful one.
+			if let error {
+				UIAlertController.showAlertWithOk(
+					title: .localized("Couldn't import"),
+					message: error.localizedDescription
+				)
+			} else {
+				dismiss()
+			}
 		}
 	}
 }

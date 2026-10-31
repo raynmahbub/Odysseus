@@ -93,53 +93,11 @@ struct FeatherApp: App {
 				_handleCertificateSelectionURL(url)
 				return
 			}
-			/// odysseus://import-certificate?p12=<base64>&mobileprovision=<base64>&password=<base64>
+			/// odysseus://import-certificate?p12=<base64>&mobileprovision=<base64>&password=<base64|raw>
+			/// Parsed and validated by `ODCertificateImportLink`; nothing is
+			/// stored until the password opens the key and the user confirms.
 			if url.host == "import-certificate" {
-				guard
-					let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-					let queryItems = components.queryItems
-				else {
-					return
-				}
-				
-				func queryValue(_ name: String) -> String? {
-					queryItems.first(where: { $0.name == name })?.value?.removingPercentEncoding
-				}
-				
-				guard
-					let p12Base64 = queryValue("p12"),
-					let provisionBase64 = queryValue("mobileprovision"),
-					let passwordBase64 = queryValue("password"),
-					let passwordData = Data(base64Encoded: passwordBase64),
-					let password = String(data: passwordData, encoding: .utf8)
-				else {
-					return
-				}
-				
-				let generator = UINotificationFeedbackGenerator()
-				generator.prepare()
-				
-				guard
-					let p12URL = FileManager.default.decodeAndWrite(base64: p12Base64, pathComponent: ".p12"),
-					let provisionURL = FileManager.default.decodeAndWrite(base64: provisionBase64, pathComponent: ".mobileprovision"),
-					FR.checkPasswordForCertificate(for: p12URL, with: password, using: provisionURL)
-				else {
-					generator.notificationOccurred(.error)
-					return
-				}
-				
-				FR.handleCertificateFiles(
-					p12URL: p12URL,
-					provisionURL: provisionURL,
-					p12Password: password
-				) { error in
-					if let error = error {
-						UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
-					} else {
-						generator.notificationOccurred(.success)
-					}
-				}
-				
+				_handleCertificateImportURL(url)
 				return
 			}
 			/// odysseus://export-certificate?callback_template=<template>
@@ -155,8 +113,11 @@ struct FeatherApp: App {
 				}
 				
 				let queryItems = components.queryItems?.reduce(into: [String: String]()) { $0[$1.name.lowercased()] = $1.value } ?? [:]
-				guard let callbackTemplate = queryItems["callback_template"]?.removingPercentEncoding else { return }
-				
+				// `URLComponents` already decoded this once; see
+				// `ODCertificateExport.resolveTemplate` for why a blind second
+				// decode is wrong.
+				guard let callbackTemplate = ODCertificateExport.resolveTemplate(queryItems["callback_template"]) else { return }
+
 				FR.exportCertificateAndOpenUrl(using: callbackTemplate)
 			}
 			/// odysseus://source/<url>
@@ -182,6 +143,113 @@ struct FeatherApp: App {
 				return
 			}
 		}
+	}
+
+	/// Imports a certificate from a deep link.
+	///
+	/// The link is untrusted input. It is decoded by
+	/// `ODCertificateImportLink`, staged in protected temporary files, accepted
+	/// only when one of the candidate passwords really opens the `.p12`, and
+	/// then confirmed by name before anything reaches the Library. The staged
+	/// files are removed on success, failure and cancellation.
+	@MainActor
+	private func _handleCertificateImportURL(_ url: URL) {
+		let fields: ODCertificateImportLink.Fields
+		do {
+			fields = try ODCertificateImportLink.parse(url)
+		} catch {
+			_presentCertificateImportFailure(error)
+			return
+		}
+
+		var temporaryURLs: [URL] = []
+		func removeTemporaryFiles() {
+			temporaryURLs.forEach(ODCertificateFiles.removeTemporary)
+			temporaryURLs.removeAll()
+		}
+
+		let p12URL: URL
+		let provisionURL: URL
+		do {
+			p12URL = try ODCertificateFiles.writeTemporaryProtected(fields.p12Data, pathExtension: "p12")
+			temporaryURLs.append(p12URL)
+			provisionURL = try ODCertificateFiles.writeTemporaryProtected(fields.provisionData, pathExtension: "mobileprovision")
+			temporaryURLs.append(provisionURL)
+		} catch {
+			removeTemporaryFiles()
+			Logger.misc.error("Could not stage a certificate import (error code \(error._code)).")
+			_presentCertificateImportFailure(ODCertificateImportError.storageFailed)
+			return
+		}
+
+		guard let decodedProfile = CertificateReader(provisionURL).decoded else {
+			removeTemporaryFiles()
+			_presentCertificateImportFailure(ODCertificateImportError.profileUnreadable)
+			return
+		}
+
+		// Only a password that opens the key is accepted; everything else is
+		// reported as a rejected password rather than as a bad file.
+		guard let password = fields.passwordCandidates.first(where: { FR.passwordOpensKey($0, for: p12URL) }) else {
+			removeTemporaryFiles()
+			_presentCertificateImportFailure(ODCertificateImportError.passwordRejected)
+			return
+		}
+
+		let generator = UINotificationFeedbackGenerator()
+		generator.prepare()
+
+		// `Certificate` models these as non-optional strings, so an empty
+		// value means "the profile didn't say".
+		let certificateName = !decodedProfile.Name.isEmpty
+			? decodedProfile.Name
+			: (!decodedProfile.AppIDName.isEmpty ? decodedProfile.AppIDName : .localized("Unnamed certificate"))
+		let teamIdentifier = decodedProfile.TeamIdentifier.first ?? ""
+		let teamName = !decodedProfile.TeamName.isEmpty
+			? decodedProfile.TeamName
+			: (!teamIdentifier.isEmpty ? teamIdentifier : .localized("unknown team"))
+
+		UIAlertController.showAlert(
+			title: .localized("Import Certificate?"),
+			message: .localized(
+				"“%@” (%@) will be added to your Library and can be used to sign apps. Only continue if you trust where this link came from.",
+				arguments: certificateName,
+				teamName
+			),
+			style: .alert,
+			actions: [
+				UIAlertAction(title: .localized("Import"), style: .default) { _ in
+					FR.handleCertificateFiles(
+						p12URL: p12URL,
+						provisionURL: provisionURL,
+						p12Password: password
+					) { error in
+						removeTemporaryFiles()
+						if let error {
+							generator.notificationOccurred(.error)
+							UIAlertController.showAlertWithOk(
+								title: .localized("Couldn't import"),
+								message: error.localizedDescription
+							)
+						} else {
+							generator.notificationOccurred(.success)
+						}
+					}
+				},
+				UIAlertAction(title: .localized("Cancel"), style: .cancel) { _ in
+					removeTemporaryFiles()
+				},
+			]
+		)
+	}
+
+	@MainActor
+	private func _presentCertificateImportFailure(_ error: Error) {
+		UINotificationFeedbackGenerator().notificationOccurred(.error)
+		UIAlertController.showAlertWithOk(
+			title: .localized("Couldn't import certificate"),
+			message: error.localizedDescription
+		)
 	}
 
 	@MainActor
@@ -237,6 +305,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 	) -> Bool {
 		ODPrefs.registerDefaults()
 		ODLocalServerTLS.removeLegacySharedMaterial()
+		ODCertificateFiles.prepare()
 		_createPipeline()
 		_createDocumentsDirectories()
 		do {
@@ -304,9 +373,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 	private func _createDocumentsDirectories() {
 		let fileManager = FileManager.default
 
+		// `certificates` is created (and protected) by `ODCertificateFiles`,
+		// outside the user-visible Documents tree.
 		let directories: [URL] = [
 			fileManager.archives,
-			fileManager.certificates,
 			fileManager.signed,
 			fileManager.unsigned
 		]

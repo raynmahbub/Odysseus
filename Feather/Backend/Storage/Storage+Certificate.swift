@@ -101,13 +101,15 @@ extension Storage {
 	/// that says the certificate is gone.
 	@discardableResult
 	func deleteCertificate(for cert: CertificatePair) -> Bool {
-		if let url = getUuidDirectory(for: cert) {
+		if let uuid = cert.uuid {
 			do {
-				try FileManager.default.removeItem(at: url)
+				// Removal is restricted to a direct child of the certificate
+				// root, so a damaged `uuid` cannot delete unrelated files.
+				try ODCertificateFiles.removeDirectory(for: uuid)
 			} catch let error as CocoaError where error.code == .fileNoSuchFile {
 				// Already removed; nothing left to protect.
 			} catch {
-				Logger.misc.error("[\(cert.uuid ?? "unknown")] Could not remove certificate files; keeping the record.")
+				Logger.misc.error("[\(uuid)] Could not remove certificate files; keeping the record.")
 				return false
 			}
 		}

@@ -59,7 +59,7 @@ Every row is traced to source code. A row is only `COMPLETE` when the full path 
 | B09 | Multiple identities and default selection | COMPLETE | `ODPrefs.defaultCertificate`, `ODSignPipeline.defaultIdentity` | Feather selection | keep | P1 | BUILD |
 | B10 | Bundle-ID prefix / suffix | COMPLETE | `ODPrefs.adjustedBundleID`, `Views/Odysseus/Settings/ODSettingsView.swift` | — | keep | P2 | NONE |
 | B11 | PPQ protection | COMPLETE | `OptionsManager.ppq*`, `ODSignPipeline.defaultOptions` | Feather PPQ | keep — note the random suffix blocks identifier-based matching later (ODY-302) | P2 | NONE |
-| B12 | Certificate export (`.p12` + password) | PARTIAL | `FR.exportCertificateAndOpenUrl` (`FR.swift:164–223`), `ODCertificateExport`, `ODDeviceAuthentication` | Feather export | encoding, Face ID gate and destination disclosure added in Remediation 01; the secret still travels in a URL and the raw-vs-base64 format mismatch is open | P0 | NONE |
+| B12 | Certificate export (`.p12` + password) | PARTIAL | `FR.exportCertificateAndOpenUrl`, `ODCertificateExport`, `ODCertificateImportLink`, `ODDeviceAuthentication` | Feather export | Remediation 02 closed the format mismatch: export → re-import round-trips, with the Face ID gate and destination disclosure from Remediation 01. The secret still travels in a URL | P0 | NONE |
 | B13 | Certificate import via `odysseus://` | COMPLETE | `FeatherApp._handleURL` (`FeatherApp.swift:97–144`) | Feather deep links | harden (S-02): confirm with the user, require unlocked device | P0 | NONE |
 | B14 | Certificate deletion | PARTIAL | `Storage+Certificate.swift:46–52` | Feather | fix BUG-005 (silent orphaned p12) | P2 | NONE |
 | B15 | Secret storage (keychain) | COMPLETE | `ODKeychain.swift`, `ODCertificatePasswordStore.swift`, `Storage+Certificate.password(for:)` | — | Apple ID secrets and `.p12` passwords both in the keychain, with read-time migration of legacy values | P0 | NONE |
@@ -179,16 +179,16 @@ These are recorded so they are not re-litigated in later planning. Details and e
 | # | Feature | Status | Existing file(s) | Default risk | Priority | Evidence |
 |---|---|---|---|---|---|---|
 | H01 | Keychain protection for Apple ID secrets | COMPLETE | `ODKeychain.swift` (`AfterFirstUnlockThisDeviceOnly`) | return codes ignored (BUG-006) | P1 | NONE |
-| H02 | Private-key material at rest | PARTIAL | password moved to the keychain (Remediation 01); `.p12` still in `Documents/Feather/Certificates/…` with no protection class and included in backups | S-03 | P0 | NONE |
+| H02 | Private-key material at rest | COMPLETE | password in the keychain (Remediation 01); `.p12`/profile moved to `Application Support/Odysseus/Certificates` with `completeUntilFirstUserAuthentication`, owner-only permissions, backup exclusion and a one-time migration (Remediation 02) | S-03 | P0 | NONE |
 | H03 | Log redaction | PARTIAL | no `privacy:` annotations anywhere; no secrets are logged (verified by grep) | S-11 | P2 | NONE |
 | H04 | Secure temporary storage | PARTIAL | Apple ID material and the TLS identity: 0600/0700 + protection + backup-excluded; certificate store and download/temp dirs: defaults | S-03 | P1 | NONE |
 | H05 | Archive extraction safety | NEEDS_INVESTIGATION | delegated to `Zip`; no own checks | S-05 | P1 | NONE |
 | H06 | URL / deep-link validation | PARTIAL | six handlers, no caller authentication | S-01, S-02 | P0 | NONE |
-| H07 | Network security | PARTIAL | ATS exceptions for Apple hosts only; LAN install server still listens on all interfaces but routes are scoped to a per-install secret and the server stops at terminal state | S-04 | P1 | NONE |
+| H07 | Network security | PARTIAL | ATS exceptions for Apple hosts only; the install server now binds only the advertised address (LAN IPv4 or loopback), serves GET only, validates `Host`, scopes routes to a per-install secret and stops on dismiss/after payload/at 10 minutes. A fully-local TLS identity with a DNS name still binds all interfaces | S-04 | P1 | NONE |
 | H08 | Source trust boundary | PARTIAL | any added source is trusted for IPA URLs | T4 | P1 | NONE |
 | H09 | Certificate validation | PARTIAL | fields parsed, chain not validated | B04 | P1 | NONE |
 | H10 | Dependency security | PARTIAL | no root `Package.resolved`; SideSign deps pinned to branches | S-08 | P1 | NONE |
-| H11 | Error recovery | PARTIAL | download/import failures and certificate deletion now report and terminate (Remediation 01); background-task and archive paths still silent | BUG-002/003/005 | P1 | NONE |
+| H11 | Error recovery | PARTIAL | download/import failures, certificate import/deletion and export failures now report and terminate (Remediation 01–02); background-task and archive paths still silent | BUG-002/003/005 | P1 | NONE |
 | H12 | Data consistency | COMPLETE | snapshot discipline, background contexts, quarantine | — | P0 | UNIT |
 | H13 | Memory management | PARTIAL | audio-engine node leak (BUG-009); retain-cycle scan clean | — | P3 | NONE |
 | H14 | Background execution | PARTIAL | dynamic `BGTaskScheduler.register` after launch (BUG-004) | — | P1 | NONE |
@@ -211,6 +211,6 @@ These are recorded so they are not re-litigated in later planning. Details and e
 | H Security | 16 | 2 | 12 | 0 | 0 | 0 | 2 |
 | **Total** | **118** | **51** | **37** | **1** | **17** | **7** | **5** |
 
-Remediation 01 (2026-10-31) changed the live status of four rows: B12 BROKEN → PARTIAL, B15 PARTIAL → COMPLETE, and H02/H07 were re-scored with the fix in place. The counts above describe the audited revision; see `REMEDIATION_01_REPORT.md`.
+Remediation 01 (2026-10-31) changed the live status of four rows: B12 BROKEN → PARTIAL, B15 PARTIAL → COMPLETE, and H02/H07 were re-scored with the fix in place. Remediation 02 (2026-10-31) moved H02 PARTIAL → COMPLETE and narrowed B12/H07. The counts above describe the audited revision; see `REMEDIATION_01_REPORT.md` and `REMEDIATION_02_REPORT.md`.
 
 Interpretation: Odysseus is not a shallow shell — 51 capabilities are end-to-end, including the hardest one (revocation) — but only **four rows** carry unit-test evidence (all in storage and revocation) and **zero rows** are device-verified, and the credential-handling gaps in group H are release blockers regardless of feature count. Priority therefore follows `ODYSSEUS_IMPLEMENTATION_ROADMAP.md` (security first, then signing correctness, then features), not the count above.

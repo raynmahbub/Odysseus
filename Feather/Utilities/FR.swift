@@ -109,6 +109,17 @@ enum FR {
 		}
 	}
 	
+	/// Whether `password` actually opens the `.p12`.
+	///
+	/// Used to choose between the candidate passwords of an import link. It
+	/// only asks the key whether the password works, so it does not modify the
+	/// provisioning profile the way `checkPasswordForCertificate` does.
+	static func passwordOpensKey(_ password: String, for key: URL) -> Bool {
+		// An empty password is legitimate for some `.p12` files, so it is
+		// tested like any other candidate.
+		p12_password_check(key.path, password)
+	}
+
 	static func checkPasswordForCertificate(
 		for key: URL,
 		with password: String,
@@ -189,14 +200,38 @@ enum FR {
 				let certificateKeyFile = Storage.shared.getFile(.certificate, from: certificate),
 				let certificateKeyFileData = try? Data(contentsOf: certificateKeyFile)
 			else {
+				// The record exists but its key material does not: say so
+				// instead of closing the sheet as if the export had worked.
+				UIAlertController.showAlertWithOk(
+					title: .localized("Couldn't export"),
+					message: .localized("The certificate file is missing from the Library. Delete this certificate and import it again.")
+				)
 				return
+			}
+
+			// `odysseus://import-certificate` needs the profile to accept the
+			// link back; refuse rather than produce a link it will reject.
+			var provisionBase64: String?
+			if ODCertificateExport.requiresProvision(in: template) {
+				guard
+					let provisionFile = Storage.shared.getFile(.provision, from: certificate),
+					let provisionData = try? Data(contentsOf: provisionFile)
+				else {
+					UIAlertController.showAlertWithOk(
+						title: .localized("Couldn't export"),
+						message: .localized("This certificate has no provisioning profile, so it can't be exported for re-import. Import the profile again first.")
+					)
+					return
+				}
+				provisionBase64 = provisionData.base64EncodedString()
 			}
 
 			guard
 				let callbackURL = ODCertificateExport.makeURL(
 					template: template,
 					certificateBase64: certificateKeyFileData.base64EncodedString(),
-					password: Storage.shared.password(for: certificate) ?? ""
+					password: Storage.shared.password(for: certificate) ?? "",
+					provisionBase64: provisionBase64
 				)
 			else {
 				// Refusing is safer than handing over a truncated link.

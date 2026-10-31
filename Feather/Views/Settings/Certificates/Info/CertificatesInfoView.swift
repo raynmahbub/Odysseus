@@ -34,11 +34,9 @@ struct CertificatesInfoView: View {
 					_miscSection(data: data)
 				}
 				
-				Section {
-					Button(.localized("Open in Files"), systemImage: "folder") {
-						UIApplication.open(Storage.shared.getUuidDirectory(for: cert)!.toSharedDocumentsURL()!)
-					}
-				}
+				// No "Open in Files" action: `.p12` material deliberately lives
+				// outside the file-sharing directory now, so there is nothing
+				// for Files to show. Use the certificate export instead.
 			}
 			.toolbar {
 				NBToolbarButton(role: .close)

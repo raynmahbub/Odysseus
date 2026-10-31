@@ -5,7 +5,8 @@
 ## 0. The honest starting point
 
 - **16 XCTest cases in 6 files** were the suite up to the audit commit, all passing in CI (run `41198043032`).
-- **Remediation 01 added 28 cases in 4 new files** (`ODCertificateExportTests`, `ODCertificateSecretStorageTests`, `ODImportTrackingTests`, `ODInstallRouteSetTests`), bringing the suite to **44 cases in 10 files**. None of the new cases has been compiled or executed yet — this environment has no toolchain (`REMEDIATION_01_REPORT.md` §5).
+- **Remediation 01 added 28 cases in 4 new files**, bringing the suite to 44 cases in 10 files.
+- **Remediation 02 added 54 more** (`ODCertificateImportLinkTests` 18, `ODCertificateFilesTests` 12, `ODInstallServerAccessTests` 16, and 8 added to `ODCertificateExportTests`), for **98 cases in 13 files**. None of the new cases has been compiled or executed — this environment has no toolchain (`REMEDIATION_02_REPORT.md` §6).
 - The original 16 cover **four** capabilities out of 118 in the feature matrix: OCSP parsing/freshness/authorisation, Zsign outcome evaluation, storage concurrency, and Apple-ID material cleanup.
 - **Nothing that requires a device has ever been verified** — not signing, not installing, not Apple ID sign-in, not background downloads, not the local TLS server.
 - Consequences of the missing seams: `FR`, `Zsign`, `ServerInstaller`, `DownloadManager` and `ODSignPipeline` are static/singleton and cannot be substituted, so most defect classes in the bug audit cannot be regression-tested today.
@@ -28,6 +29,9 @@ The strategy below is ordered to match the roadmap: make the pipeline testable f
 | `ODCertificateSecretStorageTests.swift` *(Remediation 01)* | 5 | password kept out of Core Data, legacy migration, keychain-write failure, delete removes the secret |
 | `ODImportTrackingTests.swift` *(Remediation 01)* | 8 | download/import state transitions incl. the slow-import regression |
 | `ODInstallRouteSetTests.swift` *(Remediation 01)* | 6 | install routes are secret-scoped, unique per install, and secret generation is well formed |
+| `ODCertificateImportLinkTests.swift` *(Remediation 02)* | 18 | export → re-import round trip, password candidate ordering, malformed/oversized/foreign links, no secrets in error text |
+| `ODCertificateFilesTests.swift` *(Remediation 02)* | 12 | protected location, traversal-safe deletion, owner-only permissions, backup exclusion, temp cleanup scope |
+| `ODInstallServerAccessTests.swift` *(Remediation 02)* | 16 | bind-address selection, GET/Host guard, route resolution with and without the secret |
 
 **Quality note:** these tests are not decorative — `ODZsignOutcomeTests` covers exactly the class of bug that would otherwise ship a "successful" signing of an unsigned binary, and `StorageConcurrencyTests` covers the delete/restore path.
 
@@ -53,7 +57,7 @@ Verified green at `2a54e3b` and `fe0f37e`. **No coverage threshold, no lint step
 | Revocation (OCSP/X.509/DER) | 6 | 7 cases | keep; add network-level integration test |
 | Storage / data consistency | 4 | 3 cases | extend to migration + quarantine |
 | Signing pipeline | 20 | 5 cases (Zsign outcome only) | ≥ 20 cases via `SigningService` seam |
-| Certificate lifecycle | 18 | 5 (Remediation 01: secret storage) | ≥ 12 cases |
+| Certificate lifecycle | 18 | 23 (Remediation 01–02: secrets, format, at-rest) | ≥ 12 cases |
 | Downloads | 3 | 8 (Remediation 01: import/download state) | ≥ 6 cases |
 | Sources / catalog | 16 | 0 | ≥ 10 cases |
 | Install transports | 12 | 0 | unit tests on manifest generation + manual device matrix |

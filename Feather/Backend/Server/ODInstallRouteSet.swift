@@ -17,6 +17,15 @@
 import Foundation
 import Security
 
+/// One of the endpoints an install needs.
+enum ODInstallRoute: Equatable {
+	case manifest
+	case payload
+	case smallIcon
+	case largeIcon
+	case installPage
+}
+
 struct ODInstallRouteSet: Equatable {
 	let secret: String
 	let id: UUID
@@ -46,6 +55,19 @@ struct ODInstallRouteSet: Equatable {
 
 	private var _base: String {
 		"/\(secret)/\(id.uuidString)"
+	}
+
+	/// Resolves a request path.
+	///
+	/// Matching is exact equality against generated paths, so a request cannot
+	/// reach anything else the process can read and `..` cannot match.
+	func route(for path: String) -> ODInstallRoute? {
+		if path == plistPath { return .manifest }
+		if path == payloadPath { return .payload }
+		if path == smallImagePath { return .smallIcon }
+		if path == largeImagePath { return .largeIcon }
+		if path == installPath { return .installPage }
+		return nil
 	}
 
 	var plistPath: String { _base + ".plist" }

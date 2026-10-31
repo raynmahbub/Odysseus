@@ -28,7 +28,18 @@ final class Storage: ObservableObject {
 	@Published private(set) var isStoreLoaded = false
 
 	init(inMemory: Bool = false, storeURL: URL? = nil) {
-		container = NSPersistentContainer(name: _name)
+		let model = Self._loadManagedObjectModel()
+		container = NSPersistentContainer(
+			name: _name,
+			managedObjectModel: model ?? NSManagedObjectModel()
+		)
+		guard model != nil else {
+			let error = StorageInitializationError.modelNotFound
+			storeLoadError = error
+			_storeLoadState = .failed(error)
+			Logger.misc.error("Core Data model '\(self._name)' was not found in the app bundle; Library data was not modified.")
+			return
+		}
 
 		if let description = container.persistentStoreDescriptions.first {
 			if inMemory {
@@ -143,6 +154,18 @@ final class Storage: ObservableObject {
 		return "\((try? context.count(for: request)) ?? 0)"
 	}
 
+	private static func _loadManagedObjectModel() -> NSManagedObjectModel? {
+		for bundle in [Bundle(for: Storage.self), Bundle.main] {
+			guard
+				let modelURL = bundle.url(forResource: "Feather", withExtension: "momd")
+					?? bundle.url(forResource: "Feather", withExtension: "mom"),
+				let model = NSManagedObjectModel(contentsOf: modelURL)
+			else { continue }
+			return model
+		}
+		return nil
+	}
+
 	private func _loadPersistentStore() {
 		container.loadPersistentStores { [weak self] _, error in
 			Task { @MainActor in
@@ -171,6 +194,14 @@ final class Storage: ObservableObject {
 		for waiter in waiters {
 			waiter.resume(with: result)
 		}
+	}
+}
+
+private enum StorageInitializationError: LocalizedError {
+	case modelNotFound
+
+	var errorDescription: String? {
+		"Odysseus couldn't find its Core Data model in the app bundle. The existing Library was not modified."
 	}
 }
 

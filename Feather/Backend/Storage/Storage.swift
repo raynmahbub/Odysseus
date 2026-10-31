@@ -13,6 +13,9 @@ import OSLog
 // work uses fresh background contexts and passes only object IDs/snapshots.
 @MainActor
 final class Storage: ObservableObject {
+	// Share the immutable model across containers; duplicate instances can make
+	// generated NSManagedObject entity lookup ambiguous in hosted test runs.
+	private static let _managedObjectModel = _loadManagedObjectModel()
 	static let shared = Storage()
 	let container: NSPersistentContainer
 
@@ -28,7 +31,7 @@ final class Storage: ObservableObject {
 	@Published private(set) var isStoreLoaded = false
 
 	init(inMemory: Bool = false, storeURL: URL? = nil) {
-		let model = Self._loadManagedObjectModel()
+		let model = Self._managedObjectModel
 		container = NSPersistentContainer(
 			name: _name,
 			managedObjectModel: model ?? NSManagedObjectModel()

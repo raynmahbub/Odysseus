@@ -1,6 +1,6 @@
 # Odysseus security and reliability remediation report
 
-**Status:** implementation and regression tests added; native macOS/Xcode validation is pending.
+**Status:** remediation and regression tests pass the macOS simulator test, unsigned IPA build, and packaged-IPA verification workflow; device and live-service validation remain pending.
 **Branch:** `arena/03624e7c-odysseus` (kept as supplied by the workspace; no branch switch).
 **Base:** `882ef8e2ad958d9a41463e61b62608c885315732`.
 **Scope:** security/reliability remediation only. No reference-project feature integration, release, tag, or app-identity/version change.
@@ -43,24 +43,25 @@ The historical source audit is recorded in [`BASELINE_AUDIT.md`](BASELINE_AUDIT.
 
 - **Build/package:** `.github/workflows/build.yml`, `Makefile`, `scripts/verify_ipa.sh`, `Feather.xcodeproj/project.pbxproj`, `Feather.xcodeproj/xcshareddata/xcschemes/Feather.xcscheme`.
 - **TLS/server/UI/docs:** `Feather/Backend/Server/ODLocalServerTLS.swift`, `Feather/Backend/Server/ServerInstaller+TLS.swift`, `Feather/Backend/Server/ServerInstaller+Compute.swift`, `Feather/Backend/Server/ServerInstaller.swift`, `Feather/Views/Settings/Installation/Server & SSL/ServerView.swift`, `HOW_IT_WORKS.md`, `README.md`.
-- **Signing/import/install:** `Feather/Backend/AppleID/ODAppleIDManager.swift`, `Feather/Backend/Odysseus/ODSignPipeline.swift`, `Feather/Utilities/FR.swift`, `Feather/Utilities/Handlers/AppFileHandler.swift`, `Feather/Utilities/Handlers/ArchiveHandler.swift`, `Feather/Utilities/Handlers/SigningHandler.swift`, `Feather/Utilities/Handlers/ZsignHandler.swift`, `Feather/Views/Library/Install/InstallPreviewView.swift`, `Feather/Views/Odysseus/Install/ODInstallSheet.swift`, `Feather/Views/Odysseus/Library/ODLibraryView.swift`, `Feather/Views/Common/FRAppIconView.swift`.
+- **Signing/import/install:** `Feather/Backend/AppleID/ODAppleIDManager.swift`, `Feather/Backend/Odysseus/ODSignPipeline.swift`, `Feather/Utilities/FR.swift`, `Feather/Utilities/Handlers/AppFileHandler.swift`, `Feather/Utilities/Handlers/ArchiveHandler.swift`, `Feather/Utilities/Handlers/SigningHandler.swift`, `Feather/Utilities/Handlers/ZsignHandler.swift`, `Feather/Views/Library/Install/InstallPreviewView.swift`, `Feather/Views/Odysseus/Install/ODInstallSheet.swift`, `Feather/Views/Odysseus/Library/ODLibraryView.swift`, `Feather/Views/Odysseus/Settings/ODSettingsView.swift`, `Feather/Views/Common/FRAppIconView.swift`.
 - **Persistence/concurrency/preferences:** `Feather/Backend/Storage/Storage.swift`, `Feather/Backend/Storage/Storage+Imported.swift`, `Feather/Backend/Storage/Storage+Signed.swift`, `Feather/Backend/Storage/Storage+Shared.swift`, `Feather/FeatherApp.swift`, `Feather/Views/Settings/Reset/ResetView.swift`, `Feather/Views/Sources/SourcesAddView.swift`, `Feather/Views/Sources/SourcesViewModel.swift`, `Feather/Backend/Observable/OptionsManager.swift`, `Feather/Backend/Odysseus/ODPrefs.swift`.
 - **OCSP:** `Feather/Backend/Certificates/ODCertificateStatusStore.swift`, `Feather/Backend/Certificates/ODOCSPChecker.swift`, `Feather/Backend/Certificates/ODOCSPCore.swift`, `Feather/Backend/Certificates/ODX509.swift`.
-- **Regression tests:** `OdysseusTests/ODAppleIDMaterialCleanupTests.swift`, `OdysseusTests/ODOCSPCoreTests.swift`, `OdysseusTests/ODOCSPFreshnessTests.swift`, `OdysseusTests/ODOCSPResponderAuthorizationTests.swift`, `OdysseusTests/ODZsignOutcomeTests.swift`, `OdysseusTests/StorageConcurrencyTests.swift`.
+- **Regression tests/report:** `OdysseusTests/ODAppleIDMaterialCleanupTests.swift`, `OdysseusTests/ODOCSPCoreTests.swift`, `OdysseusTests/ODOCSPFreshnessTests.swift`, `OdysseusTests/ODOCSPResponderAuthorizationTests.swift`, `OdysseusTests/ODZsignOutcomeTests.swift`, `OdysseusTests/StorageConcurrencyTests.swift`, `docs/SECURITY_RELIABILITY_REMEDIATION.md`.
 
 ## Validation performed
 
 - `bash -n scripts/verify_ipa.sh` — pass.
 - `make -n iphoneos` — pass; this inspected commands only and did not build the app.
 - Python OpenStep project parse with `py-pbxproj` and shared scheme XML parse — pass. These are syntax/structure checks, not Xcode build validation.
-- Added 16 XCTest cases covering Zsign outcomes, OCSP CertID/responder-authorization/freshness rules, concurrent/persistent Core Data writes, certificate relationship lookup, failed-store/reset data preservation, auto-delete defaults, and stale Apple ID material cleanup. They are in the shared scheme; macOS CI reached the suite, with two storage tests failing on model lookup as noted above. A passing run is pending.
-- `git diff --cached --check` — pass on the staged patch before commit; the IPA verifier is executable (`0755`).
-- **macOS CI:** runs `41189354559`, `41189947319`, `41190659516`, and `41191245878` exposed, in sequence, a missing task-group brace, unavailable private `SecPolicyCreateOCSPSigner`, a `Text` initializer error, and an unhandled throwing cache-clear call. Those fixes are on the branch. Runs `41191921759` and `41193027782` compiled and reached XCTest, but storage checks reported missing/ambiguous Core Data entities while app-hosted tests created multiple `Storage` instances. `Storage` now loads the `.momd` explicitly from the app bundle, shares that immutable model across containers, and fails visibly if the model is absent. A rerun is pending. No IPA verification has completed yet.
-- **Not run locally:** `xcodebuild`, Swift compilation, XCTest, `codesign`, IPA verification against a real artifact, dependency resolution/audit, or device install. This workspace is Linux and lacks the Apple toolchain. A passing simulator job is not a device-install claim.
+- Added 16 XCTest cases covering Zsign outcomes, OCSP CertID/responder-authorization/freshness rules, concurrent/persistent Core Data writes, certificate relationship lookup, failed-store/reset data preservation, auto-delete defaults, and stale Apple ID material cleanup.
+- `git diff --check` — pass; the IPA verifier is executable (`0755`).
+- **macOS CI:** after earlier runs exposed and fixed Swift compile errors (task-group closure, unavailable private OCSP API, `Text` initializer, and unhandled cache-clear error), runs `41191921759` and `41193027782` exposed Core Data model lookup failures in hosted tests. Sharing one explicitly loaded model across `Storage` containers fixed those failures. Run `41194306395` on `a57f47e` **passed**: the unit-test step (all 16 XCTest cases), `make iphoneos` app/IPA build, and `scripts/verify_ipa.sh` final IPA verification all completed successfully. Core Data prints a diagnostic for the deliberately invalid-store-path test; this negative-path test passes and verifies existing data is preserved. CI also reports non-blocking SwiftUI deprecation and GitHub Actions Node.js runtime warnings.
+- **Not run locally:** `xcodebuild`, Swift compilation, XCTest, `codesign`, IPA verification, dependency resolution/audit, or device install; this workspace is Linux and lacks Apple tooling. The successful CI build and simulator tests are not a device-install claim. OCSP behavior against live Apple responses remains unverified.
+
 
 ## Remaining developer actions and risks
 
-1. Review macOS CI output and fix any compiler, XCTest, signing, or packaging failures before merge.
+1. No compile, XCTest, IPA-build, or IPA-verification blocker remains in successful run `41194306395`; keep that CI gate green on any subsequent change.
 2. Exercise Fully Local TLS with an owned valid identity, Semi Local installation, pairing installation, certificate/Apple ID signing, and reset/recovery flows on supported iOS hardware. No device validation has been performed here.
 3. Confirm ownership and operational status of the former shared TLS credential, and rotate/revoke it if it was active. Do not reuse or redistribute it.
 4. Review existing users' saved auto-delete option as noted above. Confirm OCSP verification/freshness against current Apple responses and Security framework behavior.

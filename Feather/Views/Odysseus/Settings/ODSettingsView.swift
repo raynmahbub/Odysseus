@@ -273,11 +273,18 @@ struct ODSettingsView: View {
 				Label(.localized("Archive & Compression"), systemImage: "archivebox")
 			}
 			Button {
-				ResetView.clearWorkCache()
-				ResetView.clearNetworkCache()
-				FRIconCache.shared.invalidateAll()
-				ODTheme.success()
-				_cacheCleared = true
+				do {
+					try ResetView.clearWorkCache()
+					ResetView.clearNetworkCache()
+					FRIconCache.shared.invalidateAll()
+					ODTheme.success()
+					_cacheCleared = true
+				} catch {
+					UIAlertController.showAlertWithOk(
+						title: .localized("Couldn't Clear Cache"),
+						message: error.localizedDescription
+					)
+				}
 			} label: {
 				HStack {
 					Label(.localized("Clear Cache"), systemImage: "sparkles")

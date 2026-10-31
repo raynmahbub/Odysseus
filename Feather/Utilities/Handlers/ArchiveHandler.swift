@@ -63,7 +63,7 @@ final class ArchiveHandler: NSObject {
 		let progressContinuation = progressChannel.continuation
 		let archiveTask = Task.detached(priority: .background) {
 			defer { progressContinuation.finish() }
-			try await Zip.zipFiles(
+			try Zip.zipFiles(
 				paths: [payloadURL],
 				zipFilePath: zipURL,
 				password: nil,

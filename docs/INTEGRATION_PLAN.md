@@ -22,7 +22,9 @@ Batches are ordered by risk and dependency. Each is independently reviewable and
 | 8 | App container (LiveContainer/FlekDeck) | LC-CORE-01 + dependents | very large | **blocked — separate gate** |
 | 9 | SideStore refresh / backup | SS-REFRESH-01, SS-BACKUP-01 | very large | **investigate — separate** |
 
-Out of scope for all batches unless explicitly approved: FeatherPlus, Zeus, FlareStore (identities unverified); FlekPair (source not published).
+Out of scope for all batches unless explicitly approved: FeatherPlus (**EXCLUDE** — verified Feather fork, no distinct capability); Zeus and FlareStore (**closed-source**, no public source repo — concept-reference only); FlekPair (source not published).
+
+> **Upstream identity resolution (2026-10-31):** all nine named identities are resolved in `UPSTREAM_SOURCE_REGISTER.md`. FeatherPlus (`TomerGamerTV/FeatherPlus`, GPL-3.0, `9af4713`) adds no capability Odysseus lacks. Zeus (`getzeus.app`) and FlareStore (`flarestore.app`) publish no source — their features are inventoried as concept-only in `SOURCE_INTEGRATION_MATRIX.md`.
 
 ---
 

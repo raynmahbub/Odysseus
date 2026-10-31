@@ -182,7 +182,7 @@ This is a **separate feasibility and security workstream**, not a signing featur
 ## 8. Recommended order (current revision)
 
 1. Keep the existing security remediations green; do not regress the `ODZsignOutcome`/OCSP/Core-Data guarantees.
-2. Reconcile the upstream register and feature matrix (`UPSTREAM_SOURCE_REGISTER.md`, `SOURCE_INTEGRATION_MATRIX.md`) and resolve the three UNVERIFIED identities (FeatherPlus, Zeus, FlareStore).
+2. Reconcile the upstream register and feature matrix (`UPSTREAM_SOURCE_REGISTER.md`, `SOURCE_INTEGRATION_MATRIX.md`). **All nine named identities are now resolved:** FeatherPlus is a verified Feather fork with no distinct capability (EXCLUDE); Zeus and FlareStore are closed-source products with no public source repo (concept-reference only); FlekPair source is not published (EXCLUDE).
 3. Adopt small, independently reviewable feature batches from Ksign/RyukSign/Feather upstream (update checker, bulk signing, Web/WebDAV transfer, Live Activities, file manager) — see `INTEGRATION_PLAN.md`.
 4. Treat LiveContainer/FlekDeck app-container hosting as a separate gated workstream.
 5. Add device/account validation before claiming install/sign correctness.

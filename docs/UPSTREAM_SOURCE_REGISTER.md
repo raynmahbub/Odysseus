@@ -13,13 +13,13 @@ Status legend: **VERIFIED** (repo located, inspected, identity/license confirmed
 | # | Project (as named) | Resolved repository | Default branch | HEAD commit (at audit) | License | Status |
 |---|---|---|---|---|---|---|
 | 1 | Feather | `claration/Feather` (formerly `khcrysalis/Feather`; `gh api repos/khcrysalis/Feather` redirects to `claration/feather`) | `main` | `7078b053c0af262809a48e4d3898d42b0d35fedf` | GPL-3.0 | **VERIFIED** |
-| 2 | FeatherPlus | *none found* | — | — | — | **UNVERIFIED** |
+| 2 | FeatherPlus | `TomerGamerTV/FeatherPlus` | `main` | `9af4713cf6d5c1db3a1f24ddabca53008a46ac5a` | GPL-3.0 | **VERIFIED** (Feather fork; no distinct capability — EXCLUDE) |
 | 3 | KSign | `Nyasami/Ksign` | `main` | `c14dedc0c9dadb669021cce83435b14f781b8412` | GPL-3.0 | **VERIFIED** (case-sensitive clone: `Nyasami/ksign.git`) |
 | 4 | RyukSign | `faroukbmiled/RyukSign` | `main` | `844466cee6f212291913ba5216f8f19a9c016dea` | GPL-3.0 | **VERIFIED** |
-| 5 | FlareStore | *no matching iOS source repo* (closest: `acetex/flarestore`, JavaScript, 1 star, pushed 2022, no license — not an iOS app) | — | — | — | **UNVERIFIED** |
+| 5 | FlareStore | *no source repo* — product site `flarestore.app` (closed-source; paid certificates) | — | — | — | **VERIFIED IDENTITY / NO SOURCE** (concept reference only) |
 | 6 | LiveContainer | `LiveContainer/LiveContainer` | `main` | `9108ae624ea001f7d7696d48407f890b48fa2653` | AGPL-3.0 | **VERIFIED** |
 | 7 | SideStore | `SideStore/SideStore` | `develop` | `cd260851ae99bf1fc946b123db24e89c8cd21dc6` | AGPL-3.0 | **VERIFIED** |
-| 8 | Zeus | *no plausible iOS signing repo* (closest: `czstore/zeus` — HTML, no license, "free and paid ios mods", pushed 2021) | — | — | — | **UNVERIFIED** |
+| 8 | Zeus | *no source repo* — product site `getzeus.app` (closed-source; pre-signed IPA) | — | — | — | **VERIFIED IDENTITY / NO SOURCE** (concept reference only) |
 | 9 | FlekStore / FlekDeck | `flekstore/FlekDeck` (org/user `flekstore`) | `main` | `6ba96e1181ffe6c21e70ecdf71ae7027256a5e8d` | AGPL-3.0 | **VERIFIED** |
 | 9a | (FlekStore) LiveContainer-FS | `flekstore/LiveContainer-FS` | `main` | `9d4d5dd49346d73ce7d3221651ce76e6e3681cbb` | Apache-2.0 | **VERIFIED** (fork of LiveContainer + SideStore) |
 | 9b | (FlekStore) FlekPair | `flekstore/FlekPair` | `main` | `d30d67e54dfd15fe5522c365df8d8e4d5247399a` | *none* (Apache-2.0 removed in last commit) | **VERIFIED repo / source NOT published** |
@@ -48,10 +48,14 @@ Status legend: **VERIFIED** (repo located, inspected, identity/license confirmed
   - Odysseus-only: the entire `Backend/AppleID/`, `Backend/Certificates/`, `Backend/Odysseus/`, `Backend/Server/ODLocalServerTLS.swift`, `Backend/Services/DefaultSourceInstaller.swift`, `Views/Odysseus/*`, `Resources/WWDR/*`, `Resources/DefaultSources.json`, `Utilities/MobileGestalt.swift`.
 - **Conclusion:** Odysseus already contains Feather's signing/install/tweak machinery. Remaining Feather-derived opportunities: the **app update checker** (`UpdateManager` + `Storage+SourceMetadata`) and Feather's custom **tab bar**.
 
-### 2.2 FeatherPlus — UNVERIFIED
+### 2.2 FeatherPlus — `TomerGamerTV/FeatherPlus` — GPL-3.0 — VERIFIED
 
-- GitHub repository search for `FeatherPlus` returns **zero** repositories; `claration` org repo list contains no such project; `feathers-plus` (a FeathersJS/JS project) is unrelated.
-- **Action required:** ask the user for the exact repository URL (or confirm it does not exist / is private). **Do not substitute** another project without approval.
+- **Identity:** a Feather fork. 98 Swift files under `Feather/`; GPL-3.0 plus `LICENSE_ELLEKIT`. HEAD `9af4713cf6d5c1db3a1f24ddabca53008a46ac5a`.
+- **Verified delta vs upstream `claration/Feather` @ `7078b05`** (recursive diff of `Feather/`):
+  - **Added:** `Feather/Utilities/MobileGestalt.swift` (private `libMobileGestalt` reader) and `Feather/Resources/Settings.bundle` (legacy iOS settings bundle).
+  - **Removed:** `mergeEntitlements` handling in `SigningHandler.swift` and the `LCGetMachOEntitlements` implementation in `Utilities/MachO/MachOUtils.m` (both present upstream).
+  - **Style/import-only changes:** `FR.swift` (`ZsignC` → `Zsign`; renamed `password_check_fix` → `password_check_fix_WHAT_THE_FUCK*`), `TweakHandler.swift`/`ZsignHandler.swift` (`Zsign` → `ZsignSwift`), `Info.plist` (added `CFBundleShortVersionString`/`CFBundleVersion`), plus several view files.
+- **Conclusion:** Odysseus **already has** `MobileGestalt.swift`. FeatherPlus adds **no distinct reusable capability** and removes two upstream features. → **EXCLUDE**. Its only novel artifact is a `Settings.bundle`, not worth adopting.
 
 ### 2.3 KSign — `Nyasami/Ksign` — GPL-3.0 — VERIFIED
 
@@ -93,11 +97,13 @@ Status legend: **VERIFIED** (repo located, inspected, identity/license confirmed
   - Tab bar config: `TabBarPreferences.swift`, `Views/Settings/TabBarSettingsView.swift`
 - **Entitlements:** need to be re-read from the RyukSign project (path differs); not critical for register.
 
-### 2.5 FlareStore — UNVERIFIED
+### 2.5 FlareStore — `flarestore.app` — closed-source, NO SOURCE REPO — IDENTITY VERIFIED
 
-- Only GitHub hit with the exact name is `acetex/flarestore` — **JavaScript**, 1 star, last pushed 2022, **no license**. It is not an iOS signing/store app and is almost certainly not the intended repository.
-- Searches for "FlareStore iOS", "flare ios store" surface only third-party *consumers* of FlareStore (app sources, localization repos), not a source repo. FlareStore appears to be a **closed-source** app.
-- **Action required:** ask the user for the exact repository URL, or confirm FlareStore is closed-source/not reusable. **Do not substitute**.
+- **Identity:** a comprehensive iOS signing/sideloading platform: native apps for iOS/iPadOS/macOS/watchOS/tvOS/visionOS plus browser tools (Web Signer, Certificate Store, IPSW status, Repository Creator/Decoder, Badge Studio, App Installer, DNS anti-revoke, UDID grabber). Product site: `flarestore.app`.
+- **Source:** **no public Swift source repo located.** GitHub searches for `flarestore` surface only community app feeds (`masspimentel/flare-repo`, `zlyti/flarestore-repo`), localization IPA repos (`GodDaddy-one/FlareStore-ZH`, `GodDaddy-one/FlareStore-macOS-ZH`), and an unrelated dormant JS repo (`acetex/flarestore`). The official changelog cites short commit SHAs, but no public repo matching them was found.
+- **License:** closed-source; the app is free but certificates are paid (Certificate Store at `flarestore.vip`).
+- **Concept-only capabilities (no source reuse possible):** signing log (last 20), signing presets, custom entitlements file, Info.plist editing, per-extension profiles, export unsigned/ad-hoc, in-app backup/restore panel, repo lists/source folders/hidden sources/APT repos, app-data backups + scheduled backups, move-app-to-new-certificate with data, "Apps on This Device", install-others-signed, Update All, pause/resume downloads + Lock Screen Live Activity, JIT from Library/Home Screen, beta channel + settings categories + hidden tabs, JIT + location editing on Vision Pro, bulk signing, tweak library + dylib browser, Apple TV signing/install, Watch app, self-update.
+- **Conclusion:** **EXCLUDE** as a source (closed). Use as a **concept reference only**; adopt only features that are independently implementable and pass review.
 
 ### 2.6 LiveContainer — `LiveContainer/LiveContainer` — AGPL-3.0 — VERIFIED
 
@@ -115,10 +121,12 @@ Status legend: **VERIFIED** (repo located, inspected, identity/license confirmed
 - **Key technologies:** `EM Proxy` + `LocalDevVPN` (VPN tunnel + loopback/Jitterbug install), `Minimuxer` (on-device usbmuxd replica), `Roxas` (AltStore internal framework), Rust deps.
 - **Odysseus already vendors SideSign** from SideStore/Catalyst for the Apple ID signing path (AGPL-3.0). Full SideStore integration (untethered refresh via VPN) is a large, distinct workstream.
 
-### 2.8 Zeus — UNVERIFIED
+### 2.8 Zeus — `getzeus.app` — closed-source, NO SOURCE REPO — IDENTITY VERIFIED
 
-- No plausible iOS signing/store repository named "Zeus" was found. The closest named repo (`czstore/zeus`) is an HTML page ("free and paid ios mods"), no license, last pushed 2021 — not a source project. Other "Zeus" hits are Bitcoin wallets, security tools, GraphQL clients, etc.
-- **Action required:** ask the user for the exact repository URL or app identity. **Do not substitute**.
+- **Identity:** a free, community sideloading app distributed as a pre-signed IPA from `repo.getzeus.app` (latest observed `Zeus-3.1.9-19.ipa`, iOS 17+). Product site: `getzeus.app`; Discord community (~25k members).
+- **Source:** **no public source repo located.** GitHub searches for `zeus ios sideload` and `zeus ipa` return unrelated projects (Bitcoin wallets, etc.).
+- **Concept-only capabilities (no source reuse possible):** curated **IPA Library** (browse/install community apps), **IPSW firmware browser** with signing status, user-created **Sources** (custom repos), community Discord.
+- **Conclusion:** **EXCLUDE** as a source (closed). The IPA Library concept is already covered by Odysseus's source/Discover views; the **IPSW browser** is the one genuinely novel concept (Odysseus has no IPSW feature).
 
 ### 2.9 FlekStore / FlekDeck — `flekstore/FlekDeck` — AGPL-3.0 — VERIFIED
 
@@ -155,8 +163,8 @@ FlekPair — source not published
 
 ## 4. Open questions for the user
 
-1. **FeatherPlus** — exact repository URL, or confirm it does not exist / is private.
-2. **Zeus** — exact repository URL or app identity (there is no obvious public iOS signing project by that name).
-3. **FlareStore** — exact repository URL, or confirm it is closed-source and should be excluded.
+1. **Zeus / FlareStore** — both are **closed-source** (confirmed via their product sites). Confirm you want them treated as **concept references only** (EXCLUDE as sources), and whether the **IPSW firmware browser** (from Zeus) should still be reimplemented from scratch — Odysseus has no IPSW feature.
+2. **FeatherPlus** — verified as a Feather fork with **no distinct capability**; confirm **EXCLUDE**.
+3. **LiveContainer/FlekDeck** scope: full app-container hosting (BLOCKED) vs. only reusable sub-components (Mach-O fixups, tweak loader, pairing helpers).
 4. Confirm the intended **LiveContainer/FlekDeck** scope: full app-container hosting (BLOCKED/INVESTIGATE) vs. only reusable sub-components (Mach-O fixups, tweak loader, pairing helpers).
 5. Confirm whether **FlekPair** (source not published) should be treated as EXCLUDE.

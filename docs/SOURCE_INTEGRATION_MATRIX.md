@@ -138,9 +138,9 @@ These are already implemented at `2a54e3b`. They are listed so the matrix is com
 
 | ID | Capability | Source | Class | Reason |
 |---|---|---|---|---|
-| UV-FP-01 | FeatherPlus (unknown feature set) | UNVERIFIED | **INVESTIGATE** | Repository not located; must be clarified before any use. |
-| UV-ZEUS-01 | Zeus (unknown feature set) | UNVERIFIED | **INVESTIGATE** | No plausible public source repo; must be clarified. |
-| UV-FS-01 | FlareStore (unknown feature set) | UNVERIFIED | **INVESTIGATE** | No matching iOS source repo; likely closed-source. |
+| UV-FP-01 | FeatherPlus (MobileGestalt, Settings.bundle) | `TomerGamerTV/FeatherPlus` @ `9af4713` | **EXCLUDE** | Verified Feather fork; **no distinct capability** — Odysseus already has `MobileGestalt.swift`. Removes two upstream features (`mergeEntitlements`, `LCGetMachOEntitlements`). |
+| UV-ZEUS-01 | Zeus: IPSW firmware browser + curated IPA library | `getzeus.app` (closed-source; no source repo) | **CONCEPT-ONLY** | Closed-source app. IPA Library ≈ Odysseus sources/Discover; **IPSW browser is a novel concept** — reimplement only if approved. |
+| UV-FS-01 | FlareStore: signing log/presets, entitlements/plist editors, backup, Update All, Live Activity downloads, Apple TV/Watch/Vision, self-update | `flarestore.app` (closed-source; no source repo) | **CONCEPT-ONLY** | Closed-source platform; rich concept reference, no source reuse possible. |
 | UV-FPAIR-01 | FlekPair (desktop pairing generator) | `flekstore/FlekPair` | **EXCLUDE** | Source not published; desktop Tauri app; not applicable on-device. |
 
 ---
@@ -159,8 +159,8 @@ These are already implemented at `2a54e3b`. They are listed so the matrix is com
 ## Part 4 — Summary
 
 - Distinct capabilities inventoried: **60** (Part 1: 17 existing; Part 2: 43 candidates/blocked/excluded).
-- After de-duplication (Part 3), **candidate adoptable feature groups**: update checking, tweak manager, bulk signing, web/WebDAV transfer, Live Activities, file manager, storage manager, tab-bar config, entitlements/plist editors, certificate auto-import, link parsers, UTType/shortcut helpers.
+- After de-duplication (Part 3), **candidate adoptable feature groups**: update checking, IPSW firmware browser (from closed-source Zeus; reimplement from scratch), tweak manager, bulk signing, web/WebDAV transfer, Live Activities, file manager, storage manager, tab-bar config, entitlements/plist editors, certificate auto-import, link parsers, UTType/shortcut helpers.
 - **BLOCKED:** entire LiveContainer/FlekDeck app-container workstream (`LC-CORE-01` and dependents).
 - **EXCLUDE:** FlekPair.
-- **UNVERIFIED / need user input:** FeatherPlus, Zeus, FlareStore.
+- **CONCEPT-ONLY (closed-source; no source reuse possible):** Zeus (IPSW firmware browser), FlareStore (signing log/presets, entitlements/plist editors, backup, Update All, Live Activity downloads, Apple TV/Watch/Vision, self-update).
 - No candidate has been implemented in this audit; all new capabilities are `SOURCE_VERIFIED` (code inspected) only.

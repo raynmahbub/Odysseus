@@ -72,6 +72,7 @@ final class SourcesViewModel: ObservableObject {
 							}
 						}
 					}
+					}
 				}
 
 				var repositories: [String: ASRepository] = [:]

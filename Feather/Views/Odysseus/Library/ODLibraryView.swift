@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import NimbleExtensions
 import CoreData
 import NimbleViews
 
@@ -266,7 +267,7 @@ struct ODLibraryView: View {
 		.contextMenu { _menu(app) }
 		.swipeActions {
 			Button(role: .destructive) {
-				Storage.shared.deleteApp(for: app)
+				_deleteApp(app)
 			} label: {
 				Label(.localized("Delete"), systemImage: "trash")
 			}
@@ -331,7 +332,20 @@ struct ODLibraryView: View {
 		}
 		Divider()
 		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
-			Storage.shared.deleteApp(for: app)
+			_deleteApp(app)
+		}
+	}
+
+	private func _deleteApp(_ app: AppInfoPresentable) {
+		Task { @MainActor in
+			do {
+				try await Storage.shared.deleteApp(for: app)
+			} catch {
+				UIAlertController.showAlertWithOk(
+					title: .localized("Couldn't Delete App"),
+					message: .localized("The app could not be fully removed. %@", arguments: error.localizedDescription)
+				)
+			}
 		}
 	}
 

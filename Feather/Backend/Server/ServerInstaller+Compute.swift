@@ -42,7 +42,7 @@ extension ServerInstaller {
 		// Odysseus: the plist server can be changed in Settings → Installation.
 		let stored = UserDefaults.standard.string(forKey: "Odysseus.customPlistServer")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		let server = stored.isEmpty ? "https://api.palera.in/genPlist" : stored
-		let baseUrl = "\(server)?bundleid=\(app.identifier!)&name=\(app.name!)&version=\(app.version!)&fetchurl=\(self.payloadEndpoint.absoluteString)"
+		let baseUrl = "\(server)?bundleid=\(app.identifier ?? "")&name=\(app.name ?? "")&version=\(app.version ?? "")&fetchurl=\(self.payloadEndpoint.absoluteString)"
 		let encodedBaseUrl = baseUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
 		let finalEncodedUrl = encodedBaseUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
 		

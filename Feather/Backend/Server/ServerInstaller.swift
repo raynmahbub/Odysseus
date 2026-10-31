@@ -14,6 +14,14 @@ import NIOTLS
 import SwiftUI
 import IDeviceSwift
 
+// The server handles requests away from the main thread. Keep only plain
+// metadata here; never retain a Core Data app object in a Vapor route.
+struct ServerAppSnapshot: Sendable {
+	let identifier: String?
+	let name: String?
+	let version: String?
+}
+
 // MARK: - Class
 class ServerInstaller: Identifiable, ObservableObject {
 	let id = UUID()
@@ -21,28 +29,51 @@ class ServerInstaller: Identifiable, ObservableObject {
 	private var _needsShutdown = false
 	
 	var packageUrl: URL?
-	var app: AppInfoPresentable
+	let app: ServerAppSnapshot
 	@ObservedObject var viewModel: InstallerStatusViewModel
 	private var _server: Application?
+	private(set) var startupError: Error?
 
-	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel) throws {
+	init(app: ServerAppSnapshot, viewModel: InstallerStatusViewModel, startServer: Bool = true) throws {
 		self.app = app
 		self.viewModel = viewModel
-		try _setup()
-		try _configureRoutes()
-		try _server?.server.start()
-		_needsShutdown = true
+		guard startServer else { return }
+
+		let server = try setupApp(port: port)
+		_server = server
+		_configureRoutes()
+		do {
+			try server.server.start()
+			_needsShutdown = true
+		} catch {
+			server.shutdown()
+			throw error
+		}
+	}
+
+	private init(app: ServerAppSnapshot, viewModel: InstallerStatusViewModel, startupError: Error) {
+		self.app = app
+		self.viewModel = viewModel
+		self.startupError = startupError
+	}
+
+	static func make(app: ServerAppSnapshot, viewModel: InstallerStatusViewModel, startServer: Bool) -> ServerInstaller {
+		do {
+			return try ServerInstaller(app: app, viewModel: viewModel, startServer: startServer)
+		} catch {
+			let installer = ServerInstaller(app: app, viewModel: viewModel, startupError: error)
+			DispatchQueue.main.async {
+				viewModel.status = .broken(error)
+			}
+			return installer
+		}
 	}
 	
 	deinit {
 		_shutdownServer()
 	}
 	
-	private func _setup() throws {
-		self._server = try? setupApp(port: port)
-	}
-		
-	private func _configureRoutes() throws {
+	private func _configureRoutes() {
 		_server?.get("*") { [weak self] req in
 			guard let self else { return Response(status: .badGateway) }
 			switch req.url.path {

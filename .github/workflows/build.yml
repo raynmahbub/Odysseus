@@ -48,6 +48,17 @@ jobs:
           key: odysseus-${{ runner.os }}-${{ hashFiles('**/Package.resolved', '**/Package.swift') }}
           restore-keys: odysseus-${{ runner.os }}-
 
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Feather.xcodeproj \
+            -scheme Feather \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+            -derivedDataPath "${{ runner.temp }}/Odysseus/tests" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log | xcbeautify --renderer github-actions
+
       - name: Version
         run: |
           BASE=$(grep -E '^FEATHER_PROJECT_VERSION' Feather.xcconfig | cut -d= -f2 | tr -d ' ')
@@ -69,12 +80,18 @@ jobs:
           make iphoneos 2>&1 | tee build.log | xcbeautify --renderer github-actions
           test -f packages/Odysseus.ipa
 
-      - name: Upload build log
+      - name: Verify final IPA
+        run: scripts/verify_ipa.sh packages/Odysseus.ipa
+
+      - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: build.log
+          name: failure-logs
+          path: |
+            build.log
+            test.log
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:

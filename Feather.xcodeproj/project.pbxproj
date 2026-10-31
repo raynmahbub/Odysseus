@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0DD5E05E000000000000010C /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0DD5E05E000000000000010B /* XCTest.framework */; };
 		3305BBAC2DB8944200660D45 /* Vapor in Frameworks */ = {isa = PBXBuildFile; productRef = 3305BBAB2DB8944200660D45 /* Vapor */; };
 		330F68FC2DBF7C8600D8C35D /* NimbleExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 330F68FB2DBF7C8600D8C35D /* NimbleExtensions */; };
 		330F68FE2DBF7C8600D8C35D /* NimbleViews in Frameworks */ = {isa = PBXBuildFile; productRef = 330F68FD2DBF7C8600D8C35D /* NimbleViews */; };
@@ -26,6 +27,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0DD5E05E0000000000000101 /* OdysseusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OdysseusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0DD5E05E000000000000010B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		336D43972DB7454A00206400 /* MobileCoreServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MobileCoreServices.framework; path = Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS18.2.sdk/System/Library/Frameworks/MobileCoreServices.framework; sourceTree = DEVELOPER_DIR; };
 		3379C1B92DA869A1004372DA /* Feather.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Feather.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		570920BD2F98A4F0008C4A83 /* Feather.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Feather.xcconfig; sourceTree = "<group>"; };
@@ -53,6 +56,11 @@
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		0DD5E05E0000000000000100 /* OdysseusTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OdysseusTests;
+			sourceTree = "<group>";
+		};
 		3379C1BB2DA869A1004372DA /* Feather */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -87,6 +95,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0DD5E05E0000000000000107 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0DD5E05E000000000000010C /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -94,6 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				336D43972DB7454A00206400 /* MobileCoreServices.framework */,
+				0DD5E05E000000000000010B /* XCTest.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -102,6 +119,7 @@
 			isa = PBXGroup;
 			children = (
 				3379C1BB2DA869A1004372DA /* Feather */,
+				0DD5E05E0000000000000100 /* OdysseusTests */,
 				3371F7302DA9ECDD00281AC6 /* Frameworks */,
 				3379C1BA2DA869A1004372DA /* Products */,
 				570920BD2F98A4F0008C4A83 /* Feather.xcconfig */,
@@ -112,6 +130,7 @@
 			isa = PBXGroup;
 			children = (
 				3379C1B92DA869A1004372DA /* Feather.app */,
+				0DD5E05E0000000000000101 /* OdysseusTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -157,6 +176,27 @@
 			productReference = 3379C1B92DA869A1004372DA /* Feather.app */;
 			productType = "com.apple.product-type.application";
 		};
+		0DD5E05E0000000000000102 /* OdysseusTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0DD5E05E0000000000000103 /* Build configuration list for PBXNativeTarget "OdysseusTests" */;
+			buildPhases = (
+				0DD5E05E0000000000000106 /* Sources */,
+				0DD5E05E0000000000000107 /* Frameworks */,
+				0DD5E05E0000000000000108 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0DD5E05E000000000000010A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0DD5E05E0000000000000100 /* OdysseusTests */,
+			);
+			name = OdysseusTests;
+			productName = OdysseusTests;
+			productReference = 0DD5E05E0000000000000101 /* OdysseusTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -170,6 +210,10 @@
 					3379C1B82DA869A1004372DA = {
 						CreatedOnToolsVersion = 16.2;
 						LastSwiftMigration = 1620;
+					};
+					0DD5E05E0000000000000102 = {
+						CreatedOnToolsVersion = 16.2;
+						TestTargetID = 3379C1B82DA869A1004372DA;
 					};
 				};
 			};
@@ -201,6 +245,7 @@
 			projectRoot = "";
 			targets = (
 				3379C1B82DA869A1004372DA /* Feather */,
+				0DD5E05E0000000000000102 /* OdysseusTests */,
 			);
 		};
 /* End PBXProject section */
@@ -211,6 +256,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				570920BE2F98A4F0008C4A83 /* Feather.xcconfig in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0DD5E05E0000000000000108 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -241,12 +293,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0DD5E05E0000000000000106 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		0DD5E05E0000000000000109 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3379C1B12DA869A1004372DA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3379C1B82DA869A1004372DA;
+			remoteInfo = Feather;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
 		339776072DC9D0F800642FFB /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			productRef = 339776062DC9D0F800642FFB /* LicensePlistBuildTool */;
+		};
+		0DD5E05E000000000000010A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3379C1B82DA869A1004372DA /* Feather */;
+			targetProxy = 0DD5E05E0000000000000109 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -501,6 +575,45 @@
 			};
 			name = Release;
 		};
+		0DD5E05E0000000000000104 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.mirazbakis.OdysseusTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = OdysseusTests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Odysseus.app/Odysseus";
+				TEST_TARGET_NAME = Feather;
+			};
+			name = Debug;
+		};
+		0DD5E05E0000000000000105 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.mirazbakis.OdysseusTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = OdysseusTests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Odysseus.app/Odysseus";
+				TEST_TARGET_NAME = Feather;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -518,6 +631,15 @@
 			buildConfigurations = (
 				3379C1CE2DA869A3004372DA /* Debug */,
 				3379C1CF2DA869A3004372DA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0DD5E05E0000000000000103 /* Build configuration list for PBXNativeTarget "OdysseusTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0DD5E05E0000000000000104 /* Debug */,
+				0DD5E05E0000000000000105 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

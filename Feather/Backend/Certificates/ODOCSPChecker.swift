@@ -10,8 +10,8 @@
 //     caIssuers URL in the certificate.
 //  3. POST an OCSP request (SHA-1 CertID) to the responder named in the
 //     certificate (ocsp.apple.com).
-//  4. Read the answer: good / revoked (date + reason) / unknown, and
-//     check the responder's signature with the Security framework.
+//  4. Read the answer: good / revoked (date + reason), validate the
+//     responder ID, signature, and Apple OCSP-signing trust.
 //
 //  Unlike the old one-way `revoked` flag, every check can move a
 //  certificate in either direction.
@@ -21,6 +21,7 @@ import Foundation
 import Security
 import CryptoKit
 import OSLog
+import NimbleExtensions
 
 // MARK: - Result
 struct ODOCSPResult: Codable, Equatable {
@@ -36,13 +37,41 @@ struct ODOCSPResult: Codable, Equatable {
 	var reason: Int?
 	var checkedAt: Date
 	var producedAt: Date?
+	var thisUpdate: Date?
 	var nextUpdate: Date?
-	/// The responder's signature was checked and chains to Apple.
+	/// The responder's signature, identity, and Apple OCSP-signing trust passed.
 	var signatureVerified: Bool
 	var responderURL: String?
 	var detail: String?
 
 	var reasonName: String? { ODOCSPCore.reasonName(reason) }
+
+	/// Only signed, determinate OCSP answers within their response validity
+	/// window are reusable for signing decisions.
+	func isFresh(at now: Date = Date(), maximumAge: TimeInterval = 3600) -> Bool {
+		guard
+			(status == .valid || status == .revoked),
+			signatureVerified,
+			maximumAge > 0,
+			checkedAt <= now.addingTimeInterval(300),
+			now.timeIntervalSince(checkedAt) <= maximumAge,
+			let producedAt,
+			producedAt <= now.addingTimeInterval(300),
+			now.timeIntervalSince(producedAt) <= maximumAge,
+			let thisUpdate,
+			thisUpdate <= now.addingTimeInterval(300),
+			now.timeIntervalSince(thisUpdate) <= maximumAge,
+			thisUpdate <= producedAt.addingTimeInterval(300)
+		else {
+			return false
+		}
+		if let nextUpdate,
+			now > nextUpdate.addingTimeInterval(300) || nextUpdate < thisUpdate.addingTimeInterval(-300)
+		{
+			return false
+		}
+		return true
+	}
 
 	var title: String {
 		switch status {
@@ -63,7 +92,7 @@ struct ODOCSPResult: Codable, Equatable {
 	}
 
 	static func couldntCheck(_ detail: String, url: String? = nil) -> ODOCSPResult {
-		ODOCSPResult(status: .couldntCheck, revokedAt: nil, reason: nil, checkedAt: Date(), producedAt: nil, nextUpdate: nil, signatureVerified: false, responderURL: url, detail: detail)
+		ODOCSPResult(status: .couldntCheck, revokedAt: nil, reason: nil, checkedAt: Date(), producedAt: nil, thisUpdate: nil, nextUpdate: nil, signatureVerified: false, responderURL: url, detail: detail)
 	}
 }
 
@@ -107,15 +136,22 @@ enum ODOCSPChecker {
 					continue
 				}
 
-				let parsed = try ODOCSPCore.parse(response: data, serial: leaf.serial)
+				let parsed = try ODOCSPCore.parse(
+					response: data,
+					serial: leaf.serial,
+					issuerNameHash: leaf.issuerNameHash,
+					issuerKeyHash: issuerKeyHash
+				)
 				guard parsed.responseStatus == 0 else {
 					lastError = ODOCSPCore.responseStatusName(parsed.responseStatus)
 					continue
 				}
 
 				let verification = _verifySignature(parsed, issuer: issuer)
-				if verification == .invalid {
-					lastError = .localized("The OCSP response signature is not valid.")
+				guard verification == .verified else {
+					lastError = verification == .invalid
+						? .localized("The OCSP response signature is not valid.")
+						: .localized("The OCSP response signature or responder identity could not be verified.")
 					continue
 				}
 
@@ -125,8 +161,9 @@ enum ODOCSPChecker {
 					reason: nil,
 					checkedAt: Date(),
 					producedAt: parsed.producedAt,
+					thisUpdate: parsed.thisUpdate,
 					nextUpdate: parsed.nextUpdate,
-					signatureVerified: verification == .verified,
+					signatureVerified: true,
 					responderURL: url.absoluteString,
 					detail: nil
 				)
@@ -144,12 +181,6 @@ enum ODOCSPChecker {
 				case .none:
 					result.status = .unknown
 					result.detail = .localized("The certificate wasn't in Apple's answer.")
-				}
-
-				if verification == .unverifiable {
-					result.detail = [result.detail, String.localized("The responder's signature could not be verified.")]
-						.compactMap { $0 }
-						.joined(separator: " ")
 				}
 
 				return result
@@ -229,7 +260,7 @@ enum ODOCSPChecker {
 	}
 
 	// MARK: Signature
-	private enum Verification {
+	private enum Verification: Equatable {
 		case verified
 		case unverifiable
 		case invalid
@@ -237,58 +268,101 @@ enum ODOCSPChecker {
 
 	private static func _verifySignature(_ response: ODOCSPParsedResponse, issuer: ODX509?) -> Verification {
 		guard
+			let issuer,
+			let responderID = response.responderID,
 			let tbs = response.tbsResponseData,
 			let signature = response.signature,
 			let algorithmOID = response.signatureAlgorithmOID,
-			let algorithm = _secAlgorithm(algorithmOID)
+			let algorithm = _secAlgorithm(algorithmOID),
+			let producedAt = response.producedAt
 		else {
 			return .unverifiable
 		}
 
-		var chain: [SecCertificate] = response.certificates.compactMap {
-			SecCertificateCreateWithData(nil, $0 as CFData)
+		var signers = response.certificates.compactMap { try? ODX509(der: $0) }
+		if _matches(responderID, certificate: issuer), !signers.contains(where: { $0.der == issuer.der }) {
+			signers.append(issuer)
 		}
-		if let issuer, let issuerCert = SecCertificateCreateWithData(nil, issuer.der as CFData) {
-			chain.append(issuerCert)
-		}
-		guard let signer = chain.first, let key = SecCertificateCopyKey(signer) else {
-			return .unverifiable
-		}
+		signers = signers.filter { _matches(responderID, certificate: $0) }
+		guard !signers.isEmpty else { return .unverifiable }
 
-		var error: Unmanaged<CFError>?
-		guard SecKeyVerifySignature(key, algorithm, tbs as CFData, signature as CFData, &error) else {
-			return .invalid
-		}
-
-		// The signer must chain to a trusted Apple root.
-		var trust: SecTrust?
-		let policy = SecPolicyCreateBasicX509()
-		guard SecTrustCreateWithCertificates(chain as CFArray, policy, &trust) == errSecSuccess, let trust else {
-			return .unverifiable
-		}
-		var trustError: CFError?
-		let trusted = SecTrustEvaluateWithError(trust, &trustError)
-		guard trusted else {
-			return .unverifiable
-		}
-
-		// Make sure the chain actually ends at Apple.
-		let count = SecTrustGetCertificateCount(trust)
-		if count > 0, let root = _certificate(at: count - 1, in: trust) {
-			let summary = (SecCertificateCopySubjectSummary(root) as String?) ?? ""
-			if !summary.localizedCaseInsensitiveContains("Apple") {
-				return .unverifiable
+		var signatureWasValid = false
+		for signer in signers {
+			guard
+				let signerCertificate = SecCertificateCreateWithData(nil, signer.der as CFData),
+				let key = SecCertificateCopyKey(signerCertificate)
+			else {
+				continue
 			}
+
+			var error: Unmanaged<CFError>?
+			guard SecKeyVerifySignature(key, algorithm, tbs as CFData, signature as CFData, &error) else {
+				continue
+			}
+			signatureWasValid = true
+
+			guard _isAuthorizedResponder(signer, issuer: issuer, producedAt: producedAt) else {
+				continue
+			}
+			return .verified
 		}
 
-		return .verified
+		return signatureWasValid ? .unverifiable : .invalid
 	}
 
-	private static func _certificate(at index: Int, in trust: SecTrust) -> SecCertificate? {
-		guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], index < chain.count else {
-			return nil
+	private static func _matches(_ responderID: ODOCSPResponderID, certificate: ODX509) -> Bool {
+		switch responderID {
+		case .byName(let name):
+			return certificate.subjectNameDER == name
+		case .byKey(let keyHash):
+			return certificate.keyHash == keyHash
 		}
-		return chain[index]
+	}
+
+	private static func _isAuthorizedResponder(_ signer: ODX509, issuer: ODX509, producedAt: Date) -> Bool {
+		guard let issuerCertificate = SecCertificateCreateWithData(nil, issuer.der as CFData) else { return false }
+		if signer.der == issuer.der {
+			return _isAppleTrusted(
+				[issuerCertificate],
+				policy: SecPolicyCreateBasicX509(),
+				at: producedAt
+			)
+		}
+
+		guard
+			signer.issuerNameDER == issuer.subjectNameDER,
+			signer.permitsOCSPSigning,
+			let signerCertificate = SecCertificateCreateWithData(nil, signer.der as CFData)
+		else {
+			return false
+		}
+		// SecPolicyCreateOCSPSigner is not part of the public iOS SDK. Validate
+		// the delegate's required EKU/key usage above, then let Security verify
+		// its certificate chain to the supplied issuer and a trusted root.
+		return _isAppleTrusted(
+			[signerCertificate, issuerCertificate],
+			policy: SecPolicyCreateBasicX509(),
+			at: producedAt
+		)
+	}
+
+	private static func _isAppleTrusted(_ certificates: [SecCertificate], policy: SecPolicy, at date: Date) -> Bool {
+		var trust: SecTrust?
+		guard SecTrustCreateWithCertificates(certificates as CFArray, policy, &trust) == errSecSuccess, let trust else {
+			return false
+		}
+		guard
+			SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
+			SecTrustSetVerifyDate(trust, date as CFDate) == errSecSuccess,
+			SecTrustEvaluateWithError(trust, nil)
+		else { return false }
+
+		guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+			  let root = chain.last,
+			  let summary = SecCertificateCopySubjectSummary(root) as String? else {
+			return false
+		}
+		return summary.localizedCaseInsensitiveContains("Apple")
 	}
 
 	private static func _secAlgorithm(_ oid: String) -> SecKeyAlgorithm? {

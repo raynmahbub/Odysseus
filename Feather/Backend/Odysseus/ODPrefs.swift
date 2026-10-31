@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import NimbleExtensions
 
 enum ODPrefs {
 	// Certificates & OCSP
@@ -26,6 +27,7 @@ enum ODPrefs {
 	// Installing
 	static let installationMethod = "Feather.installationMethod"          // Int, 0 server, 1 pairing
 	static let customPlistServer = "Odysseus.customPlistServer"           // String
+	static let localServerTLSIdentity = "Odysseus.localServerTLSIdentity" // Dictionary: id + hostname
 	static let autoDeleteIPAs = "Odysseus.autoDeleteIPAs"                 // Bool
 
 	// Sources & Discover

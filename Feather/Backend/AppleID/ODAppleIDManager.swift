@@ -138,6 +138,48 @@ final class ODAppleIDManager: ObservableObject {
 		}
 	}
 
+	/// Removes signing-material directories left behind by a crash or forced
+	/// termination. Only the app's UUID-named directories older than a day are
+	/// eligible; recently created (possibly in-use) material is left untouched.
+	static func cleanupStaleSigningMaterial(
+		in temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+		olderThan age: TimeInterval = 24 * 60 * 60,
+		now: Date = Date()
+	) {
+		let fileManager = FileManager.default
+		let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
+		do {
+			let candidates = try fileManager.contentsOfDirectory(
+				at: temporaryDirectory,
+				includingPropertiesForKeys: Array(keys),
+				options: [.skipsHiddenFiles]
+			)
+			for candidate in candidates {
+				let prefix = "OdysseusAppleID_"
+				guard candidate.lastPathComponent.hasPrefix(prefix) else { continue }
+				let suffix = String(candidate.lastPathComponent.dropFirst(prefix.count))
+				guard UUID(uuidString: suffix) != nil else { continue }
+				guard let values = try? candidate.resourceValues(forKeys: keys) else {
+					Logger.misc.error("Could not inspect a candidate Apple ID signing-material directory.")
+					continue
+				}
+				guard
+					values.isDirectory == true,
+					values.isSymbolicLink != true,
+					let modified = values.contentModificationDate,
+					now.timeIntervalSince(modified) > age
+				else { continue }
+				do {
+					try fileManager.removeItem(at: candidate)
+				} catch {
+					Logger.misc.error("Could not remove stale Apple ID signing material (error code \(error._code)).")
+				}
+			}
+		} catch {
+			Logger.misc.error("Could not scan for stale Apple ID signing material (error code \(error._code)).")
+		}
+	}
+
 	// MARK: Anisette
 	var anisetteServers: [URL] {
 		let stored = UserDefaults.standard.string(forKey: Self.anisetteServersKey) ?? Self.defaultAnisetteServer
@@ -558,22 +600,40 @@ final class ODAppleIDManager: ObservableObject {
 			// 3. Profile
 			let profile = try await _portal.downloadProvisioningProfile(for: appID, deviceType: deviceType, team: team, session: session)
 
-			// 4. Files for zsign
+			// 4. Files for zsign. If any write fails, remove partially-created
+			// private-key material before propagating the error.
 			let dir = FileManager.default.temporaryDirectory.appendingPathComponent("OdysseusAppleID_\(UUID().uuidString)", isDirectory: true)
-			try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-			let p12URL = dir.appendingPathComponent("appleid.p12")
-			let provisionURL = dir.appendingPathComponent("appleid.mobileprovision")
-			try p12.write(to: p12URL, options: .completeFileProtection)
-			try profile.data.write(to: provisionURL)
-
-			return ODAppleIDSigningMaterial(
-				p12URL: p12URL,
-				p12Password: p12Password,
-				provisionURL: provisionURL,
-				bundleIdentifier: bundleID,
-				expiration: profile.expirationDate,
-				teamID: team.identifier
+			do {
+				try FileManager.default.createDirectory(
+				at: dir,
+				withIntermediateDirectories: true,
+				attributes: [.posixPermissions: 0o700]
 			)
+				let p12URL = dir.appendingPathComponent("appleid.p12")
+				let provisionURL = dir.appendingPathComponent("appleid.mobileprovision")
+				try p12.write(to: p12URL, options: .completeFileProtection)
+				try profile.data.write(to: provisionURL, options: .completeFileProtection)
+				try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: p12URL.path)
+				try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: provisionURL.path)
+
+				return ODAppleIDSigningMaterial(
+					p12URL: p12URL,
+					p12Password: p12Password,
+					provisionURL: provisionURL,
+					bundleIdentifier: bundleID,
+					expiration: profile.expirationDate,
+					teamID: team.identifier
+				)
+			} catch {
+				if FileManager.default.fileExists(atPath: dir.path) {
+					do {
+						try FileManager.default.removeItem(at: dir)
+					} catch {
+						Logger.misc.error("Could not remove partially-created Apple ID signing material (error code \(error._code)).")
+					}
+				}
+				throw error
+			}
 		}
 	}
 

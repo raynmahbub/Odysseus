@@ -14,6 +14,11 @@ enum ODOCSPCertStatus: Equatable {
 	case unknown
 }
 
+enum ODOCSPResponderID: Equatable {
+	case byName(Data)
+	case byKey(Data)
+}
+
 struct ODOCSPParsedResponse {
 	/// 0 = successful. Anything else is an OCSP error status.
 	let responseStatus: Int
@@ -21,6 +26,7 @@ struct ODOCSPParsedResponse {
 	let producedAt: Date?
 	let thisUpdate: Date?
 	let nextUpdate: Date?
+	let responderID: ODOCSPResponderID?
 	/// DER of tbsResponseData, for signature checks.
 	let tbsResponseData: Data?
 	let signatureAlgorithmOID: String?
@@ -55,7 +61,12 @@ enum ODOCSPCore {
 		return ODDER.sequence(tbsRequest)
 	}
 
-	static func parse(response data: Data, serial: Data) throws -> ODOCSPParsedResponse {
+	static func parse(
+		response data: Data,
+		serial: Data,
+		issuerNameHash: Data,
+		issuerKeyHash: Data
+	) throws -> ODOCSPParsedResponse {
 		let root = try ODDER.root(data)
 		let top = root.children
 		guard let statusNode = top.first, statusNode.tag == 0x0A else {
@@ -63,7 +74,7 @@ enum ODOCSPCore {
 		}
 		let status = Int(statusNode.value.first ?? 0xFF)
 		guard status == 0 else {
-			return ODOCSPParsedResponse(responseStatus: status, certStatus: nil, producedAt: nil, thisUpdate: nil, nextUpdate: nil, tbsResponseData: nil, signatureAlgorithmOID: nil, signature: nil, certificates: [])
+			return ODOCSPParsedResponse(responseStatus: status, certStatus: nil, producedAt: nil, thisUpdate: nil, nextUpdate: nil, responderID: nil, tbsResponseData: nil, signatureAlgorithmOID: nil, signature: nil, certificates: [])
 		}
 
 		// responseBytes [0] EXPLICIT SEQUENCE { responseType OID, response OCTET STRING }
@@ -95,6 +106,7 @@ enum ODOCSPCore {
 		if tbsParts.first?.tag == 0xA0 { tbsParts.removeFirst() }
 		guard tbsParts.count >= 3 else { throw ODDERError.unexpected("tbs") }
 
+		let responderID = _responderID(tbsParts[0])
 		let producedAt = ODDER.date(tbsParts[1])
 		let responses = tbsParts[2].children
 
@@ -107,7 +119,15 @@ enum ODOCSPCore {
 			let parts = single.children
 			guard parts.count >= 3 else { continue }
 			let idParts = parts[0].children
-			guard idParts.count == 4, ODDER.normalizedInteger(idParts[3].value) == wantedSerial else { continue }
+			guard
+				idParts.count == 4,
+				idParts[0].children.first.flatMap(ODDER.oidString) == sha1OID,
+				idParts[1].tag == 0x04,
+				idParts[1].value == issuerNameHash,
+				idParts[2].tag == 0x04,
+				idParts[2].value == issuerKeyHash,
+				ODDER.normalizedInteger(idParts[3].value) == wantedSerial
+			else { continue }
 
 			let statusNode = parts[1]
 			switch statusNode.tag {
@@ -141,11 +161,29 @@ enum ODOCSPCore {
 			producedAt: producedAt,
 			thisUpdate: thisUpdate,
 			nextUpdate: nextUpdate,
+			responderID: responderID,
 			tbsResponseData: tbs.raw,
 			signatureAlgorithmOID: sigAlg,
 			signature: signature,
 			certificates: certs
 		)
+	}
+
+	private static func _responderID(_ node: ODDERNode) -> ODOCSPResponderID? {
+		switch node.tag {
+		case 0xA1: // byName [1] Name
+			if let name = node.children.first, name.tag == 0x30 {
+				return .byName(name.raw)
+			}
+			return .byName(ODDER.tlv(0x30, node.value))
+		case 0x82: // byKey [2] KeyHash (implicit)
+			return .byKey(node.value)
+		case 0xA2: // byKey [2] KeyHash (explicit)
+			guard let keyHash = node.children.first, keyHash.tag == 0x04 else { return nil }
+			return .byKey(keyHash.value)
+		default:
+			return nil
+		}
 	}
 
 	/// RFC 5280 CRLReason names.

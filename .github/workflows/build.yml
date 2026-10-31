@@ -57,7 +57,7 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -derivedDataPath "${{ runner.temp }}/Odysseus/tests" \
             -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log | xcbeautify --renderer github-actions
 
       - name: Version
         run: |
@@ -83,12 +83,15 @@ jobs:
       - name: Verify final IPA
         run: scripts/verify_ipa.sh packages/Odysseus.ipa
 
-      - name: Upload build log
+      - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: build.log
+          name: failure-logs
+          path: |
+            build.log
+            test.log
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:

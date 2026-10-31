@@ -71,7 +71,7 @@ final class ODSignPipeline: ObservableObject {
 	/// Download id (app unique id) → what the Get button should show.
 	@Published private(set) var phases: [String: GetPhase] = [:]
 
-	private var _pendingGets: Set<String> = []
+	private var _tracking = ODImportTracking()
 	private var _observer: NSObjectProtocol?
 
 	private init() {
@@ -200,7 +200,7 @@ final class ODSignPipeline: ObservableObject {
 					}
 					signingMaterial = ODSigningOverride(
 						p12Path: p12URL.path,
-						p12Password: cert.password ?? "",
+						p12Password: Storage.shared.password(for: cert) ?? "",
 						provisionPath: provisionURL.path,
 						certificateUUID: certificateUUID
 					)
@@ -324,13 +324,13 @@ final class ODSignPipeline: ObservableObject {
 			return
 		}
 
-		_pendingGets.insert(id)
+		_tracking.begin(id)
 		phases[id] = .downloading
 		_ = DownloadManager.shared.startDownload(from: url, id: id)
 	}
 
 	func cancelGet(_ id: String) {
-		_pendingGets.remove(id)
+		_tracking.forget(id)
 		phases[id] = nil
 		if let download = DownloadManager.shared.getDownload(by: id) {
 			DownloadManager.shared.cancelDownload(download)
@@ -344,21 +344,45 @@ final class ODSignPipeline: ObservableObject {
 	/// The download finished; sees whether nothing else is running for it
 	/// (a failed download never imports) and cleans up.
 	func downloadEnded(_ id: String) {
-		guard _pendingGets.contains(id) else { return }
+		guard _tracking.isTracking(id) else { return }
 		if DownloadManager.shared.getDownload(by: id) == nil, phases[id] == .downloading {
 			// Give the import notification a moment to arrive.
 			Task { @MainActor in
 				try? await Task.sleep(nanoseconds: 3_000_000_000)
 				if self.phases[id] == .downloading, DownloadManager.shared.getDownload(by: id) == nil {
-					self._pendingGets.remove(id)
+					// Keep the id recoverable: a slow import that arrives after
+					// this point must still be signed instead of being dropped.
+					self._tracking.downloadStopped(id)
 					self.phases[id] = .failed(.localized("Download failed"))
 				}
 			}
 		}
 	}
 
+	/// The transfer itself failed. Terminal: no import will follow.
+	///
+	/// Ignored for ids that are no longer tracked, so cancelling a "Get" does
+	/// not replace the cleared state with a failure message.
+	func downloadFailed(_ id: String, error: Error?) {
+		guard _tracking.isTracking(id) else { return }
+		_tracking.forget(id)
+		let message = error?.localizedDescription ?? .localized("Download failed")
+		Logger.misc.error("Download failed: \(message)")
+		phases[id] = .failed(message)
+	}
+
+	/// The file arrived but could not be imported (corrupt archive, wrong
+	/// password, not an IPA). Reported as an import problem rather than a
+	/// network failure.
+	func importFailed(_ id: String, error: Error?) {
+		guard _tracking.isTracking(id) else { return }
+		_tracking.forget(id)
+		Logger.misc.error("Import failed: \(error?.localizedDescription ?? "unknown error")")
+		phases[id] = .failed(ODSignError.importFailed.localizedDescription)
+	}
+
 	private func _didImport(uuid: String, objectID: NSManagedObjectID, downloadID: String) {
-		guard _pendingGets.remove(downloadID) != nil else { return }
+		guard _tracking.imported(downloadID) == .signing else { return }
 
 		guard
 			let imported = try? Storage.shared.context.existingObject(with: objectID) as? Imported,

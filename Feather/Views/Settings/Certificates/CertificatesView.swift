@@ -134,8 +134,17 @@ extension CertificatesView {
 	@ViewBuilder
 	private func _actions(for cert: CertificatePair) -> some View {
 		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
+			// The record is only dropped once its key material is gone; a
+			// failed removal keeps the certificate visible instead of leaving
+			// an orphaned `.p12` behind.
+			guard Storage.shared.deleteCertificate(for: cert) else {
+				UIAlertController.showAlertWithOk(
+					title: .localized("Couldn't delete"),
+					message: .localized("The certificate files couldn't be removed, so the certificate was kept. Try again, or free up storage first.")
+				)
+				return
+			}
 			ODCertificateStatusStore.shared.remove(cert)
-			Storage.shared.deleteCertificate(for: cert)
 		}
 	}
 	

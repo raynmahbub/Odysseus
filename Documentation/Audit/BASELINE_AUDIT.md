@@ -8,6 +8,8 @@
 **Working tree:** clean at the start of the audit (`git status --porcelain` empty)
 **Mode:** audit and documentation only — **no production code was modified**
 
+> **Publication note:** this package was committed as `10f56462b41e04db33784c3e3fbbfdcad6a83b8f` ("docs(audit): complete Odysseus audit package"). Remediation 01 (`REMEDIATION_01_REPORT.md`) started from that commit; the app-code observations below still describe the tree it audited, and the code changes made by the remediation are listed in that report.
+
 This document establishes *what exists and what has been proven*, so the later audits can be read against a fixed baseline. It replaces the baseline section of the earlier `docs/` package (see §9 for the relationship between the two trees).
 
 ---

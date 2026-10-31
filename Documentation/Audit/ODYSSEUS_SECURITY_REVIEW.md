@@ -34,6 +34,7 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-01 — Certificate export sends the `.p12` **and its raw password** to a caller-supplied URL, without biometric confirmation
 - **Severity:** High · **Threat:** T1/T2/T6 · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31): partially fixed.** The password is now percent-encoded by `ODCertificateExport`, the destination is shown in the confirmation, and `ODDeviceAuthentication` requires Face ID/passcode before export. The secret still travels inside a URL, by design of the feature. See `REMEDIATION_01_REPORT.md` §3.1.
 - **Evidence:** `FR.swift:164–223` — `exportCertificateAndOpenUrl(using: template)` substitutes the certificate (percent-encoded) and `certificate.password` **raw** into an arbitrary template and calls `UIApplication.shared.open`; reachable from `odysseus://export-certificate?callback_template=<any URL>` (`FeatherApp.swift:146–157`). The confirmation alert (`FR.swift:214–219`) warns that an external app will be able to sign, but **never displays the destination**.
 - **Impact:** any app or web link can present the export dialog; a single tap sends the private key to an attacker-controlled scheme or `https` host. The password is unencoded, so reserved characters both break the transfer and end up in cleartext in URL logs/history. The same passwords are the ones stored in Core Data. That the exporter writes the password raw while the app's own importer expects base64 (see ODY-BUG-001) shows the round trip was never tested — so the export path is being exercised almost exclusively by external consumers, which is exactly the wrong population to trust.
 - **Fix:** require Face ID/passcode; show the resolved destination host/scheme in the confirmation; refuse non-`odysseus`-registered destinations unless the user types them; percent-encode the password **and** prefer a file/share-sheet transfer over URLs entirely.
@@ -41,6 +42,7 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-02 — Certificate import is silent: no confirmation, no authentication, and it can become the default identity
 - **Severity:** High · **Threat:** T1/T2 · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31): still open — deliberately deferred.** Fixing it changes the import flow for every deep link and deserves its own change. It is the first item in `REMEDIATION_01_REPORT.md` §7.
 - **Evidence:** `FeatherApp.swift:97–144` decodes `p12`/`mobileprovision`/`password` from the URL and calls `FR.handleCertificateFiles(...)` with no prompt. `ODSignPipeline.defaultCertificate` (`:98–102`) falls back to `certificates.first` when no default is set.
 - **Impact:** a link can install an attacker's signing identity on the device without the user seeing anything beyond an alert on success; if the user had no certificate, the next install is signed with it. The user believes they signed with their own identity.
 - **Fix:** require explicit confirmation naming the certificate subject/team and the source; never auto-select a non-user-confirmed certificate as default; require the device to be unlocked (already implied by keychain class, not by the flow); log the import in diagnostics.
@@ -48,6 +50,7 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-03 — Certificate material at rest is unprotected, and `Documents/` is user-visible
 - **Severity:** High · **Threat:** T6 · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31): password fixed, file storage still open.** The password moved to the keychain with a read-time migration; the `.p12` tree, `UIFileSharingEnabled` and backup inclusion are unchanged. See `REMEDIATION_01_REPORT.md` §3.2.
 - **Evidence:** `Storage+Certificate.swift:30` (`password` plain attribute), `CertificateFileHandler.copy()` (`:47–59`, copies into `Documents/Feather/Certificates/<UUID>/` with the default protection class and no `isExcludedFromBackup`), `Info.plist:106` `UIFileSharingEnabled = true`. Contrast `ODLocalServerTLS.swift:102–106, 228–232`, which correctly applies `0o700`/`0o600`, protection and backup exclusion to *its* identity — the pattern exists in this codebase, it was simply not applied to the user's certificate store.
 - **Impact:** the private key and its password are readable by anyone who can browse Files/iTunes file sharing, and both are included in device backups (so they travel to iCloud and to any computer that restores the backup). File protection is whatever the class default is — on a locked device after first unlock, that is not sufficient for key material.
 - **Fix:** keychain for the password (roadmap ODY-102), `completeUntilFirstUserAuthentication` + `isExcludedFromBackup` on the directory, and stop exposing `Documents/` (move to `Application Support` with file sharing disabled, or expose only an explicitly shared folder).
@@ -55,6 +58,7 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-04 — The install server listens on all interfaces with no authentication
 - **Severity:** Medium · **Threat:** T3 · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31): partially fixed.** `NSLocalNetworkUsageDescription` added; routes moved under a per-install 128-bit secret; the server stops at terminal install state. The bind address is intentionally unchanged because the Semi Local transport serves the manifest over the LAN. See `REMEDIATION_01_REPORT.md` §3.3.
 - **Evidence:** `ServerInstaller+TLS.swift:36` (`.hostname("0.0.0.0", port:)`), `ServerInstaller.swift:79–110` (four routes: manifest plist, two icons, payload), no token, no per-session secret, no rate limit; port is random per launch (`ServerInstaller.swift:25`), which is obscurity, not control.
 - **Impact:** while an install is in progress, any host on the same network can fetch the manifest and the IPA payload, learning bundle id, name, and the binary itself. The random port narrows the window but is enumerable.
 - **Fix:** bind loopback unless the selected transport requires LAN; add a per-install random path token; stop the server immediately after the install completes (already attempted — verify `_shutdownServer`), and surface a LAN-mode warning.
@@ -111,6 +115,7 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 
 ### S-13 — Certificate deletion does not guarantee removal (cross-ref ODY-BUG-006)
 - **Severity:** Medium · **Threat:** T6 · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31): fixed.** Deletion removes files first and keeps the record (returning `false`) when removal fails. See `REMEDIATION_01_REPORT.md` §3.2.
 - **Evidence:** `Storage+Certificate.swift:46–52`.
 - **Impact:** a compromised certificate the user deleted can remain on disk indefinitely; combined with S-03 that material is readable.
 - **Fix:** quarantine-or-fail semantics; overwrite/remove the directory; report failures.
@@ -170,3 +175,25 @@ Out of scope: jailbroken devices, kernel exploits, Apple platform compromise, an
 6. Any `try!`/`as!` remains on an input-derived path (crash → potential data loss).
 
 **Verification status:** every finding above is static. No exploit was attempted, no dynamic analysis was performed, and no finding has been reproduced on a device. S-05 in particular depends on third-party decompression behaviour that was not executed.
+
+---
+
+## 7. Remediation status (Remediation 01, 2026-10-31)
+
+| Finding | Status after Remediation 01 | Evidence |
+|---|---|---|
+| S-01 | Partially fixed — encoding, biometric gate, destination disclosure; url-borne secret remains | `ODCertificateExport`, `ODDeviceAuthentication`, `FR.swift`; `ODCertificateExportTests` |
+| S-02 | Open | — |
+| S-03 | Password fixed (keychain + migration); files, file sharing and backup exposure open | `ODCertificatePasswordStore`, `Storage+Certificate`; `ODCertificateSecretStorageTests` |
+| S-04 | Partially fixed — declaration, per-install route secret, terminal stop; binding unchanged by design | `ODInstallRouteSet`, `ServerInstaller`, `Info.plist`; `ODInstallRouteSetTests` |
+| S-05 | Open | — |
+| S-06 | Open | — |
+| S-07 | Open | — |
+| S-08 | Open | — |
+| S-09 | Open (the new certificate-password store verifies its own writes; `ODKeychain` itself still discards statuses) | `ODCertificatePasswordStore.swift` |
+| S-10 | Open | — |
+| S-11 | Open | — |
+| S-12 | Open | — |
+| S-13 | Fixed | `Storage+Certificate.deleteCertificate(for:)`; `ODCertificateSecretStorageTests` |
+
+The release gate in §6 is unchanged and still blocks distribution on S-01 (url-borne secret), S-02, S-03 (files), S-08 and missing device verification.

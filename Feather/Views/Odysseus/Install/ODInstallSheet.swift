@@ -118,6 +118,9 @@ struct ODInstallSheet: View {
 				case .completed, .broken(_):
 					progressTask?.cancel()
 					progressTask = nil
+					// The install is over: stop listening instead of waiting for
+					// the sheet to be deallocated.
+					installer.stop()
 					#if !targetEnvironment(macCatalyst)
 					BackgroundAudioManager.shared.stop()
 					#endif

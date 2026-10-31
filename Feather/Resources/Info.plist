@@ -99,6 +99,8 @@
 	<string>Odysseus uses the camera to scan QR codes with source links.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Odysseus asks for Face ID before exporting your Apple ID certificate.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Odysseus runs a temporary local web server so iOS can install the app you signed. It is only reachable while an install is in progress.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

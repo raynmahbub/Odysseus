@@ -191,7 +191,7 @@ enum ODCertificateLoader {
 	@MainActor
 	static func certificateDER(for cert: CertificatePair) -> Data? {
 		if let p12 = Storage.shared.getFile(.certificate, from: cert),
-		   let der = leafCertificate(p12: p12, password: cert.password) {
+		   let der = leafCertificate(p12: p12, password: Storage.shared.password(for: cert)) {
 			return der
 		}
 		if let provision = Storage.shared.getFile(.provision, from: cert) {

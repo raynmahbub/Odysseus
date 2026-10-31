@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import OSLog
 import UIKit.UIImpactFeedbackGenerator
 import BackgroundTasks
 
@@ -170,14 +171,20 @@ extension DownloadManager: URLSessionDownloadDelegate {
 	
 	func handlePachageFile(url: URL, dl: Download) throws {
 		FR.handlePackageFile(url, download: dl) { err in
-			if err != nil {
+			let id = dl.id
+
+			if let err {
 				let generator = UINotificationFeedbackGenerator()
 				generator.notificationOccurred(.error)
-			}
-			
-			let id = dl.id
-			Task { @MainActor in
-				ODSignPipeline.shared.downloadEnded(id)
+				// The download succeeded but the file could not be imported:
+				// report that, instead of the generic "Download failed".
+				Task { @MainActor in
+					ODSignPipeline.shared.importFailed(id, error: err)
+				}
+			} else {
+				Task { @MainActor in
+					ODSignPipeline.shared.downloadEnded(id)
+				}
 			}
 			
 			DispatchQueue.main.async {
@@ -202,19 +209,39 @@ extension DownloadManager: URLSessionDownloadDelegate {
 		let tempDirectory = FileManager.default.temporaryDirectory
 		let customTempDir = tempDirectory.appendingPathComponent("FeatherDownloads", isDirectory: true)
 		
+		// Use the server-suggested filename if available, otherwise fallback
+		let suggestedFileName = downloadTask.response?.suggestedFilename ?? download.fileName
+		let destinationURL = customTempDir.appendingPathComponent(suggestedFileName)
+
 		do {
 			try FileManager.default.createDirectoryIfNeeded(at: customTempDir)
-			
-			// Use the server-suggested filename if available, otherwise fallback
-			let suggestedFileName = downloadTask.response?.suggestedFilename ?? download.fileName
-			let destinationURL = customTempDir.appendingPathComponent(suggestedFileName)
-			
 			try FileManager.default.removeFileIfNeeded(at: destinationURL)
 			try FileManager.default.moveItem(at: location, to: destinationURL)
-			
+
 			try handlePachageFile(url: destinationURL, dl: download)
 		} catch {
-			print("Error handling downloaded file: \(error.localizedDescription)")
+			// Previously this only printed, so the row stayed "downloading"
+			// forever and the same app could not be fetched again.
+			Logger.misc.error("Could not prepare a downloaded file for import.")
+			try? FileManager.default.removeItem(at: destinationURL)
+
+			let id = download.id
+			DispatchQueue.main.async {
+				if let index = self.getDownloadIndex(by: id) {
+					self.downloads.remove(at: index)
+				}
+
+				Task { @MainActor in
+					ODSignPipeline.shared.downloadFailed(id, error: error)
+				}
+
+				#if !targetEnvironment(macCatalyst)
+				if #available(iOS 26.0, *) {
+					BackgroundTaskManager.shared.stopTask(for: id, success: false)
+				}
+				self._updateBackgroundAudioState()
+				#endif
+			}
 		}
 	}
 	
@@ -251,7 +278,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
 			}
 			let id = download.id
 			Task { @MainActor in
-				ODSignPipeline.shared.downloadEnded(id)
+				ODSignPipeline.shared.downloadFailed(id, error: error)
 			}
 		}
 	}

@@ -1,7 +1,7 @@
 # Upstream source register
 
-**Audit date:** 2026-10-31 (UTC)
-**Basis:** GitHub API + `git ls-remote` + shallow clones (`--depth 1`) into `/tmp/upstream`, inspected directly. Each entry records what is confirmed by code/documentation vs inferred.
+**Audit date:** 2026-10-31 (UTC) · **Re-verified:** 2026-10-31 against the working tree at `c2040b0` (branch `arena/b50aa4f2-odysseus`).
+**Basis:** GitHub API + `git ls-remote` + shallow clones (`--depth 1`, sparse) into `/tmp/up`, inspected directly. Every commit hash below was re-checked against `git rev-parse HEAD` in the clone during this pass, including RyukSign `844466c` and Feather `7078b05`. Each entry records what is confirmed by code/documentation vs inferred.
 **Purpose:** fix the intended repository, branch, commit, license, and lineage for every project named in the integration brief *before* any code is copied.
 
 Status legend: **VERIFIED** (repo located, inspected, identity/license confirmed) · **AMBIGUOUS** (a candidate exists but identity is not certain) · **UNVERIFIED** (no plausible repository located; must be clarified before use).
@@ -165,6 +165,44 @@ FlekPair — source not published
 
 1. **Zeus / FlareStore** — both are **closed-source** (confirmed via their product sites). Confirm you want them treated as **concept references only** (EXCLUDE as sources), and whether the **IPSW firmware browser** (from Zeus) should still be reimplemented from scratch — Odysseus has no IPSW feature.
 2. **FeatherPlus** — verified as a Feather fork with **no distinct capability**; confirm **EXCLUDE**.
-3. **LiveContainer/FlekDeck** scope: full app-container hosting (BLOCKED) vs. only reusable sub-components (Mach-O fixups, tweak loader, pairing helpers).
-4. Confirm the intended **LiveContainer/FlekDeck** scope: full app-container hosting (BLOCKED/INVESTIGATE) vs. only reusable sub-components (Mach-O fixups, tweak loader, pairing helpers).
-5. Confirm whether **FlekPair** (source not published) should be treated as EXCLUDE.
+3. **LiveContainer/FlekDeck** scope: full app-container hosting (BLOCKED/INVESTIGATE) vs. only reusable sub-components (Mach-O fixups, tweak loader, pairing helpers).
+4. Confirm whether **FlekPair** (source not published) should be treated as EXCLUDE.
+
+> Duplicate question 3/4 from the previous revision has been merged. Batch-specific licensing questions are in §5.
+
+---
+
+## 5. Adopted code — per-file provenance and notice handling
+
+This table is the durable record for every upstream file whose code is copied or adapted into Odysseus. It is updated **in the same change** that adds the file; a file without a row here must not be merged.
+
+Rules:
+
+1. The Odysseus file carries a header naming the upstream project, the upstream path, the **full 40-character commit**, the license, and a one-line description of the modification (the convention already used by `Feather/Utilities/MachO/MachOUtils.m` for LiveContainer's Apache-2.0 fixups).
+2. No upstream `LICENSE` file is copied into the tree and no license text is pasted into new files: Odysseus's own `LICENSE` (GPL-3.0) already covers GPL-3.0-derived files.
+3. `license_plist.yml` gains an entry **only** when a third-party file or package is vendored, not when GPL-3.0 code is adapted inside a GPL-3.0 project.
+4. `README.md` Credits gains one line per upstream project actually reused.
+5. AGPL-3.0 code (`SideSign/`, LiveContainer/FlekDeck container work) is never mixed into `Feather/`; the existing GPL §13 note in `README.md` stays accurate only while that boundary holds.
+
+### Batch 1 (proposed — not yet implemented)
+
+| Odysseus file | Upstream repo | Upstream path | Commit | License | Modification | Notice location |
+|---|---|---|---|---|---|---|
+| `Feather/Backend/Odysseus/ODVersionCompare.swift` | `faroukbmiled/RyukSign` | `RyukSign/Backend/Observable/AppUpdateChecker.swift` (`isNewerVersion`) | `844466cee6f212291913ba5216f8f19a9c016dea` | GPL-3.0 | type + access level, `highest(_:)` added, non-numeric handling documented | file header |
+| `Feather/Backend/Odysseus/ODSkippedUpdatesManager.swift` | `faroukbmiled/RyukSign` | `RyukSign/Backend/Observable/SkippedUpdatesManager.swift` | `844466c` | GPL-3.0 | Odysseus-namespaced defaults key + notification, injectable `UserDefaults`, `resumeAll()` added | file header |
+| `Feather/Backend/Odysseus/ODUpdateChecker.swift` | `faroukbmiled/RyukSign` + `claration/Feather` | `AppUpdateChecker.swift` (`hasUpdate`, `computeUpdate`) + `Feather/Backend/Observable/UpdateManager.swift` | `844466c` / `7078b053c0af262809a48e4d3898d42b0d35fedf` | GPL-3.0 (both) | re-based on `ODCatalogStore` instead of `NBFetchService`; value-type snapshots instead of `FetchedResults`; name matching removed | file header |
+| `Feather/Views/Odysseus/Settings/ODUpdatesSettingsView.swift` | — | — | — | — | original UI (deliberately not RyukSign's self-update screen) | none |
+| `OdysseusTests/ODVersionCompareTests.swift` | — | — | — | — | original | none |
+| `OdysseusTests/ODUpdateMatcherTests.swift` | — | — | — | — | original | none |
+| `OdysseusTests/ODSkippedUpdatesManagerTests.swift` | — | — | — | — | original | none |
+
+Also required with Batch 1: `README.md` Credits line for RyukSign; no `license_plist.yml` change; no AGPL component involved.
+
+### Already adopted (for completeness)
+
+| Odysseus file | Upstream | Commit | License | Notice |
+|---|---|---|---|---|
+| `Feather/Utilities/MachO/MachOUtils.m` | `LiveContainer/LiveContainer` (Mach-O SDK-26 / arm64e fixups) | `3a029b6bb36c11cc05784a8840d41c7e46af1540` | Apache-2.0 | inline header + `README.md` Credits + `license_plist.yml` ("LiveContainer" → `Zsign/LICENSE_LC`) |
+| `Feather/Utilities/Handlers/TweakHandler.swift`, `ZsignHandler.swift`, signing/install core | `claration/Feather` (snapshot) | snapshot import, no commit recorded | GPL-3.0 | `LICENSE`, `README.md` |
+| `SideSign/**` | `SideStore/Catalyst` | vendored package, `SideSign/Package.resolved` | AGPL-3.0 | `SideSign/LICENSE`, `README.md` license section, `license_plist.yml` |
+| `AltSourceKit/**`, `NimbleKit/**` | `claration` (AltStore-derived) | local packages | MIT | `AltSourceKit/LICENSE`, `license_plist.yml` |

@@ -1,31 +1,49 @@
 # Odysseus baseline source audit (re-verified)
 
 **Audit date:** 2026-10-31 (UTC)
-**Repository revision:** `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` (`fix(ios): replace deprecated SwiftUI onChange handlers`)
-**Working branch:** `arena/088597d5-odysseus` (== `master` at this revision; no divergence yet)
+**Audited revision:** `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` (`fix(ios): replace deprecated SwiftUI onChange handlers`)
+**Current working revision:** `c2040b04f22f6eaab67211f3a5cd62aad91970c3` (`docs(audit): map upstream feature compatibility and integration plan`)
+**Working branch:** `arena/b50aa4f2-odysseus` (== `master`; see §0.1 — the branch and hash named in the first issue of this audit are stale)
 **Previous audit:** `docs/BASELINE_AUDIT.md` at revision `2664dadedf9aca36fda0925a8aada92e2c79323f`, branch `arena/438d62e5-odysseus`
 **Scope:** re-establish the current app, architecture, implementation state, build evidence, and highest-risk defects against the **current** working tree before feature integration. Static source audit plus review of the existing GitHub Actions result. Not an iOS device-security certification.
 
-> **How to read this file.** Every finding below is tagged **RECHECKED** (re-examined against the current tree at `2a54e3b`), **NEW** (first recorded here), or **STALE** (present in the previous audit but no longer true / no longer present). The previous audit is preserved verbatim in [Appendix A](#appendix-a-previous-audit-2664dad).
+> **How to read this file.** Every finding below is tagged **RECHECKED** (re-examined against the current tree), **NEW** (first recorded here), or **STALE** (present in the previous audit but no longer true / no longer present). The previous audit is preserved verbatim in [Appendix A](#appendix-a-previous-audit-2664dad).
+>
+> **Baseline caveat.** Findings were re-examined at `2a54e3b`. Since then the history was squashed; the tree is now `c2040b0`. §0.1 proves that every path outside `docs/` is byte-identical between the two revisions, so the findings carry over. Where a finding is a *claim about the build*, §6 records the CI run instead of an assumption.
 
 ---
 
-## 0. Repository state — verified at `2a54e3b`
+## 0. Repository state — verified at `c2040b0`
 
 | Fact | Value | Status |
 |---|---|---|
 | Root | `/home/user/Odysseus` | RECHECKED |
 | Remote | `https://github.com/raynmahbub/Odysseus.git` (`origin`) | RECHECKED |
-| HEAD | `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` | RECHECKED |
-| `master` | `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` (identical to HEAD) | RECHECKED |
-| Working branch | `arena/088597d5-odysseus` | RECHECKED |
+| HEAD | `c2040b04f22f6eaab67211f3a5cd62aad91970c3` | **NEW — corrected** |
+| `master` | `c2040b04…` (identical to HEAD and to `origin/master`) | **NEW — corrected** |
+| Working branch | `arena/b50aa4f2-odysseus` | **NEW — corrected** |
+| Audited revision | `2a54e3bf…` — no longer a reachable commit object in this clone | **NEW** |
 | Working tree | clean (`git status --porcelain` empty) | RECHECKED |
-| History depth | **single commit** — the repository was squashed/imported; `git log` shows one commit | NEW |
-| Tag | `nightly` → `2a54e3b` | RECHECKED |
+| History depth | **single commit** — the repository was squashed/imported twice; `git log` shows one commit | NEW |
+| Tag | `nightly` → `2a54e3b` exists on the remote; the local clone carries **no tags** | **NEW — corrected** |
 | Submodules pinned | `Zsign` @ `6ffe703df73ef9069adacdbb19d571f11a69a801` (`khcrysalis/Zsign-Package`, branch `package`); `IDeviceKitten` @ `837cf1e14d4875771dd5ee1b754a4c86215c5db3` (`khcrysalis/IDeviceKit`) | RECHECKED |
 | Submodules initialized | **NO** — both submodule working trees are empty in this checkout (`git submodule status` shows `-`) | NEW |
 
 **Consequence:** a local `xcodebuild` in this sandbox is impossible twice over — the checkout is Linux (no `xcodebuild`, no `swiftc`), and the two git submodules are not populated. CI populates them with `submodules: recursive`.
+
+### 0.1 Baseline identity — how `2a54e3b` and `c2040b0` relate
+
+The repository history was squashed when this sandbox was created, so the audited commit is no longer reachable locally and `arena/088597d5-odysseus` (still on the remote as `fe0f37e`) is not the tree that will be modified. The *content* is unchanged:
+
+| Check | Result |
+|---|---|
+| `git rev-parse HEAD:Feather` | `c996af8e9f653ea3e668558371bd0e4603516f22` |
+| `gh api repos/raynmahbub/Odysseus/git/trees/2a54e3b` → `Feather` | `c996af8e9f653ea3e668558371bd0e4603516f22` |
+| Top-level paths compared | 27 of 27; **only `docs/` differs** |
+
+So this audit is valid for the code at `c2040b0`. `docs/` differs because this audit package was added on top of the audited tree. Re-verified in this session against the current tree: entitlements contain only `get-task-allow`; the test target holds 16 cases in 6 files; both submodules are empty; `DefaultSources.json` still ships three live third-party sources plus placeholders; `IPHONEOS_DEPLOYMENT_TARGET = 17.0`, `CODE_SIGN_STYLE = Manual`, bundle ID `com.mirazbakis.Odysseus`.
+
+The full disposition of the five review points raised against this package (branch/baseline, counts and statuses, the data-model check, per-file licensing, and Batch 1 approval) is recorded in [`BATCH1_READINESS_REVIEW.md`](BATCH1_READINESS_REVIEW.md).
 
 ## 1. Project shape
 
@@ -68,16 +86,18 @@ Remote SPM packages (declared in `project.pbxproj`, **no root `Package.resolved`
 
 ## 3. Feature presence vs proof
 
+`Source status` is deliberately narrow: **`Code present`** means the code exists and is reachable; it does **not** mean tested, and it never means device-verified. `Absent` means there is no implementation. Test and build evidence are tracked separately (`SOURCE_INTEGRATION_MATRIX.md` status model, §6 below).
+
 | Capability | Source status | Evidence / gaps |
 |---|---|---|
-| Discover storefront, search, categories, featured/recent rows, duplicate grouping | Implemented | `ODDiscoverView`, `ODCatalog`. No catalog unit tests. |
-| Sources: add/import/export, QR, auto-refresh, default sources | Implemented | `SourcesAddView`, `ODQRScannerView`, `SourcesViewModel`, `DefaultSourceInstaller`. No retry/failure tests. |
-| Import IPA/TIPA, library organization, expiry pills | Implemented | `AppFileHandler`, `ODLibraryView`. Not exercised on-device. |
-| Sign with `.p12` + `.mobileprovision` (Zsign) | Implemented | `ZsignHandler` + `ODZsignOutcome.validate`. Build success ≠ every sign result valid. |
-| Apple ID signing | Implemented | `ODAppleIDManager` + SideSign. Live portal behavior unverified. |
-| OCSP status, notifications, expiry reminders, revoked policy | Implemented | `ODOCSP*` + tests for parser/freshness/authz. Live Apple interoperability unverified. |
-| Local server + pairing install | Implemented | `ServerInstaller*`, IDevice path. No device result in this audit. |
-| Tweaks & app customization | Implemented (Feather-derived) | `TweakHandler`, `SigningHandler` modifications. |
+| Discover storefront, search, categories, featured/recent rows, duplicate grouping | Code present | `ODDiscoverView`, `ODCatalog`. No catalog unit tests. Not exercised on-device. |
+| Sources: add/import/export, QR, auto-refresh, default sources | Code present | `SourcesAddView`, `ODQRScannerView`, `SourcesViewModel`, `DefaultSourceInstaller`. No retry/failure tests. |
+| Import IPA/TIPA, library organization, expiry pills | Code present | `AppFileHandler`, `ODLibraryView`. Not exercised on-device. |
+| Sign with `.p12` + `.mobileprovision` (Zsign) | Code present | `ZsignHandler` + `ODZsignOutcome.validate`. Build success ≠ every sign result valid. |
+| Apple ID signing | Code present | `ODAppleIDManager` + SideSign. Live portal behavior unverified. |
+| OCSP status, notifications, expiry reminders, revoked policy | Code present | `ODOCSP*` + tests for parser/freshness/authz. Live Apple interoperability unverified. |
+| Local server + pairing install | Code present | `ServerInstaller*`, IDevice path. No device result in this audit. |
+| Tweaks & app customization | Code present (Feather-derived) | `TweakHandler`, `SigningHandler` modifications. |
 | App update checker | **Absent** | Upstream Feather has `Backend/Observable/UpdateManager.swift` + `Storage+SourceMetadata.swift`; RyukSign has `AppUpdateChecker`. Odysseus does not. Candidate. |
 | Bulk/batch signing | **Absent** | Ksign `BulkSigningView`; RyukSign `BatchJobRunner`/`BatchSignView`. Candidate. |
 | File manager / hex/plist editor | **Absent** | Ksign `Views/Files/*`. Candidate. |
@@ -159,7 +179,10 @@ No physical-device test has been run for: Fully Local TLS with an owned identity
 ### CI evidence
 - Workflow: `.github/workflows/build.yml` — runs on `macos-26`, Xcode `26.4`.
 - Steps: checkout (`submodules: recursive`) → `xcodebuild test` (iOS Simulator, iPhone 17) → version → `make iphoneos` → `scripts/verify_ipa.sh` → upload IPA → publish nightly/release.
-- The previous audit referenced successful run `37659670246` (2026-10-07) at the older revision. **The current revision `2a54e3b` has not been independently re-verified in this session** — no CI run was fetched for it. Treat the current revision's CI status as **UNVERIFIED** until a run is observed.
+- The previous audit referenced successful run `37659670246` (2026-10-07) at the older revision.
+- **RECHECKED in this session:** run `41198043032` on `master` at `2a54e3b` (2026-10-31T11:43Z) — **success**, job "Build unsigned Odysseus.ipa" (simulator unit tests + IPA build + `scripts/verify_ipa.sh`). The audited code therefore has green CI.
+- Run `41219757550` (`arena/088597d5-odysseus`, `fe0f37e`, docs PR #4) — **success**, same job. This is the audit package's own build.
+- The squashed `c2040b0` SHA has no CI run of its own (squash-merge did not trigger one on `master`); its only delta from the green tree is `docs/`. Cite the run ids, not the SHA, when asserting a green baseline.
 
 ### Checks performed in this audit
 - Read the full current source tree (all `Feather/**`, `OdysseusTests/**`, `SideSign/Sources/**`).

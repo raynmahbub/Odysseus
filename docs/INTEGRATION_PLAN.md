@@ -1,7 +1,8 @@
 # Integration plan
 
-**Audit date:** 2026-10-31 (UTC) · **Revision:** `2a54e3b`
-**Status:** proposal — **no production code changed yet.** Awaiting explicit approval before Batch 1.
+**Audit date:** 2026-10-31 (UTC) · **Revision:** `c2040b0` (byte-identical to the audited `2a54e3b` outside `docs/`)
+**Working branch:** `arena/b50aa4f2-odysseus` (== `master`); all work lands there and is proposed to `master` as one PR.
+**Status:** proposal — **no production code changed yet.** Batch 1 was **rescoped** on 2026-10-31 after the data-model check in [`BATCH1_READINESS_REVIEW.md`](BATCH1_READINESS_REVIEW.md) §3; it is awaiting the three decisions in that document's §7.
 
 Batches are ordered by risk and dependency. Each is independently reviewable and revertable. Feature IDs reference `SOURCE_INTEGRATION_MATRIX.md`.
 
@@ -12,7 +13,7 @@ Batches are ordered by risk and dependency. Each is independently reviewable and
 | Batch | Feature(s) | IDs | Size | Risk |
 |---|---|---|---|---|
 | 0 | Audit + docs + foundation checks | — | docs | low |
-| **1** | **App update checker (core + UI)** | **R-UPD-01 / F-UPD-01** | **~7 files** | **low** |
+| **1** | **App update checker (core + UI)** — rescoped, no schema change | **R-UPD-01 / F-UPD-01** | **11 files** | **low** |
 | 2 | Tweak Manager | R-TWEAKMGR-01 | large | medium |
 | 3 | Batch/bulk signing + bulk install UI | R-BATCH-01, K-BULKSIGN-01, K-BULKINST-01 | medium | medium |
 | 4 | Web transfer server (HTTP + WebDAV + auth) | R-WEB-01/02/03 | medium | medium-high (network) |
@@ -28,152 +29,29 @@ Out of scope for all batches unless explicitly approved: FeatherPlus (**EXCLUDE*
 
 ---
 
-# Batch 1 — App update checker (first batch)
+# Batch 1 — App update checker (re-proposed)
 
-## Objective & feature IDs
-- **Objective:** tell the user when an app in their Library has a newer version available in one of their sources, with per-app ignore and a manual "Check Now".
-- **IDs:** `R-UPD-01` (primary, RyukSign `AppUpdateChecker` + `SkippedUpdatesManager`), `F-UPD-01` (reference, Feather `UpdateManager` + `Storage+SourceMetadata`).
+**Status: proposed, not approved.** The exact file-by-file plan, behaviour, matching rules, tests, acceptance criteria, and rollback are in [`BATCH1_READINESS_REVIEW.md`](BATCH1_READINESS_REVIEW.md) §6. That section is the authoritative plan; this page does not restate it, to avoid two versions drifting apart.
 
-## Included / excluded scope
-- **Included:** version comparison; matching Library apps to source apps; per-app skip list; a Library update affordance; a Settings → Updates screen; unit tests for comparison/skip/matching.
-- **Excluded:** automatic downloading/updating; self-update (`R-UPD-02`); a new Core Data `AppSourceMetadata` entity (deferred to a Batch 1b if provenance-carrying across re-sign is needed); background scheduling beyond the existing source-refresh cadence.
+## What changed from the first draft
 
-## Source repositories / commits / original paths
-- `faroukbmiled/RyukSign` @ `844466cee6f212291913ba5216f8f19a9c016dea` (branch `main`)
-  - `RyukSign/Backend/Observable/AppUpdateChecker.swift`
-  - `RyukSign/Backend/Observable/SkippedUpdatesManager.swift`
-- `claration/Feather` @ `7078b053c0af262809a48e4d3898d42b0d35fedf` (branch `main`)
-  - `Feather/Backend/Observable/UpdateManager.swift`
-  - `Feather/Backend/Storage/Storage+SourceMetadata.swift`
-- License: GPL-3.0 (both). Preserve notices; add to `license_plist.yml` if new third-party files are vendored (none are — this is an ADAPT of in-repo Feather-derived code).
+| Change | Reason |
+|---|---|
+| Dropped the `sourceURL` addition to `AppInfoPresentable` (`Storage+Shared.swift` is no longer modified) | `Signed.source` is never written and `Imported.source` is never populated by the import path, so the witness would always return `nil` and the checker would silently match nothing. See review §3.2. |
+| Dropped the `FeatherApp.swift` launch hook | `ODCatalogStore.rebuild()` is already the refresh convergence point and now feeds the checker. |
+| Added `ODCatalogStore.swift` and `ODPrefs.swift` to the modified list | Consume the existing catalog instead of a second `NBFetchService` fetch path; add namespaced preference keys. |
+| No name-based matching (deviation from RyukSign) | RyukSign matches by display name, which can offer an update from an unrelated app. Review §3.4. |
+| Core Data values are snapshotted before matching | RyukSign reads `FetchedResults` inside a detached task — the exact bug class fixed in the security remediation. |
+| Three test files instead of one | One file per unit under test, matching the existing `OdysseusTests` layout. |
+| Deterministic prefix/suffix stripping added | Apps signed with a bundle-ID prefix/suffix would otherwise never match. PPQ cannot be reversed and is documented as unsupported in v1. |
+| Explicit follow-up: Batch 1b (provenance, schema change) | Proper attribution needs `AppSourceMetadata` (Feather) or `originalIdentifier` (RyukSign); that is a migration-bearing change and needs its own approval. |
 
-## Exact Odysseus files
+## Summary
 
-### Create
-| Path | Action | Content |
-|---|---|---|
-| `Feather/Backend/Odysseus/ODVersionCompare.swift` | create | Pure version-comparison helper ported from RyukSign `AppUpdateChecker.isNewerVersion(_:than:)`. |
-| `Feather/Backend/Odysseus/ODSkippedUpdatesManager.swift` | create | Per-app skip list, ported from RyukSign `SkippedUpdatesManager.swift` (UserDefaults-backed). |
-| `Feather/Backend/Odysseus/ODUpdateChecker.swift` | create | `ODAppUpdate` model + `ODUpdateChecker` ObservableObject; matching + comparison orchestration. Adapted from RyukSign `AppUpdateChecker` + Feather `UpdateManager`. |
-| `Feather/Views/Odysseus/Settings/ODUpdatesSettingsView.swift` | create | Settings screen: enable/disable, Check Now, last-checked date, skipped-app list. |
-| `OdysseusTests/ODUpdateCheckerTests.swift` | create | Unit tests for version compare, skip manager, and matching. |
-
-### Modify
-| Path | Action | Change |
-|---|---|---|
-| `Feather/Backend/Storage/Storage+Shared.swift` | modify | Add `sourceURL` to `AppInfoPresentable` (default `nil`) and witness it on `Signed`/`Imported` from the Core Data `source` attribute, so the checker can match an app to its source repository. |
-| `Feather/Views/Odysseus/Library/ODLibraryView.swift` | modify | Show an update indicator/button on apps that have an available update. |
-| `Feather/Views/Odysseus/Settings/ODSettingsView.swift` | modify | Add a "Updates" row navigating to `ODUpdatesSettingsView`. |
-| `Feather/FeatherApp.swift` | modify (optional) | Trigger `ODUpdateChecker.shared.checkForUpdates(...)` on the existing source-refresh cadence / active-scene path. **TO VERIFY** exact hook point against current `AppDelegate`/`onChange` code. |
-
-## Phase 5 — file-by-file plan (Batch 1)
-
-### 1. `Feather/Backend/Odysseus/ODVersionCompare.swift` — CREATE
-- **Upstream:** RyukSign `AppUpdateChecker.swift` (private `isNewerVersion`), commit `844466c`.
-- **Symbols:** `enum ODVersionCompare { static func components(_ version: String) -> [Int]; static func isNewer(_ new: String, than old: String) -> Bool }`.
-- **Behavior:** split on `.`, parse Ints, compare component-wise with missing components treated as 0; return true on first strictly-greater component, false otherwise. Empty/unparsable → false.
-- **Dependencies:** Foundation only.
-- **Tests:** `1.2 > 1.1`; `2.0 > 1.9.9`; `1.0 == 1.0`; `1.0 < 1.1`; `1.0.0 == 1.0`; non-numeric input.
-- **Risk/rollback:** pure function; delete file to revert.
-
-### 2. `Feather/Backend/Odysseus/ODSkippedUpdatesManager.swift` — CREATE
-- **Upstream:** RyukSign `SkippedUpdatesManager.swift`, commit `844466c`.
-- **Symbols:** `@MainActor final class ODSkippedUpdatesManager: ObservableObject { static let shared; static let defaultsKey = "Odysseus.skippedUpdateBundleIDs"; @Published private(set) var bundleIDs: Set<String>; static var persisted: Set<String>; var sortedBundleIDs: [String]; func isIgnored(_:); func ignore(_:); func resume(_:); func toggle(_:) }`; `extension Notification.Name { static let odysseusSkippedUpdatesChanged }`.
-- **Behavior:** mute/unmute bundle IDs in UserDefaults; post a notification on change. `persisted` is a thread-safe snapshot for off-main reads.
-- **Dependencies:** Foundation, Combine.
-- **Tests:** ignore/resume/toggle persistence; `isIgnored` on empty/nil.
-- **Risk/rollback:** isolated; delete to revert. Preference key is Odysseus-namespaced (not Feather's) to avoid collisions.
-
-### 3. `Feather/Backend/Odysseus/ODUpdateChecker.swift` — CREATE
-- **Upstream:** RyukSign `AppUpdateChecker.swift` (`checkForUpdates`, `computeUpdate`, `findInstalledApp`, `hasUpdate`) and Feather `UpdateManager.swift` (`checkForUpdates`, `_findUpdates`, URL normalization), commits `844466c` / `7078b05`.
-- **Symbols:**
-  - `struct ODAppUpdate: Identifiable, Equatable { let id: String; let appUUID: String; let appName: String; let bundleIdentifier: String; let localVersion: String?; let remoteVersion: String; let downloadURL: URL; let sourceURL: URL }`
-  - `@MainActor final class ODUpdateChecker: ObservableObject { static let shared; @Published private(set) var updates: [String: ODAppUpdate]; @Published private(set) var isChecking: Bool; @Published private(set) var lastCheckedDate: Date?; func update(for app: AppInfoPresentable) -> ODAppUpdate?; func checkForUpdates(sources: [AltSource], localApps: [AppInfoPresentable]) async; func clearCache() }`
-- **Behavior / control flow:**
-  1. Guard `!isChecking`; set `isChecking = true`; `defer { isChecking = false; lastCheckedDate = Date() }`.
-  2. Fetch each source repository via `NBFetchService().fetch(from:)` (AltSourceKit), skipping failures.
-  3. For each local app: determine `sourceURL` (from `AppInfoPresentable.sourceURL`); find the matching source by normalized URL; find the repository app whose `id == app.identifier`; skip if missing.
-  4. Skip if `ODSkippedUpdatesManager.shared.isIgnored(identifier)`.
-  5. Compare `ODVersionCompare.isNewer(remoteVersion, than: localVersion)`; if true, record `ODAppUpdate`.
-  6. Assign `updates` on the main actor.
-- **Concurrency:** repository fetches run off-main via `withCheckedContinuation` over `NBFetchService`; results re-enter the main actor. `updates` mutated only on main.
-- **Input validation:** ignore empty identifier/version; normalize source URLs (scheme/host lowercased, fragment dropped, trailing slash trimmed) as in Feather `UpdateManager._normalizedSourceURL`.
-- **Error handling:** a failed source fetch is skipped (logged), not fatal; cancellation propagates.
-- **Dependencies:** Foundation, AltSourceKit, OSLog, NimbleExtensions (localized strings).
-- **Tests:** matching by identifier + source URL; skip-list exclusion; no-update case; source-fetch-failure tolerance (using a protocol seam if needed).
-- **Risk/rollback:** new file; delete to revert. The `AppInfoPresentable.sourceURL` addition is additive (default `nil`).
-
-### 4. `Feather/Backend/Storage/Storage+Shared.swift` — MODIFY
-- **Existing symbol:** `protocol AppInfoPresentable` (lines ~133–141); `extension Signed: AppInfoPresentable`; `extension Imported: AppInfoPresentable`.
-- **Change:** add `var sourceURL: URL? { get }` requirement with a protocol-extension default returning `nil`; provide witnesses on `Signed`/`Imported` returning the Core Data `source` attribute (`source as? URL`).
-- **Behavior:** enables the checker to tie a Library app to its source repository without a new entity.
-- **Risk/rollback:** additive; revert by removing the requirement and witnesses.
-
-### 5. `Feather/Views/Odysseus/Library/ODLibraryView.swift` — MODIFY
-- **Existing symbol:** app row rendering (`_appRow`/cell) and the `@ObservedObject _statusStore` pattern.
-- **Change:** observe `ODUpdateChecker.shared`; for each app with `update(for:) != nil`, show an "Update" badge/button that re-runs the Get flow for the remote `downloadURL` (via `ODSignPipeline.get`/`DownloadManager.startDownload`).
-- **TO VERIFY:** exact cell builder location and how `ODGetButton` is reused.
-- **Risk/rollback:** small view diff; revert by removing the badge.
-
-### 6. `Feather/Views/Odysseus/Settings/ODSettingsView.swift` — MODIFY
-- **Change:** add one `NavigationLink` row → `ODUpdatesSettingsView()`.
-- **Risk/rollback:** one row; revert by deletion.
-
-### 7. `Feather/Views/Odysseus/Settings/ODUpdatesSettingsView.swift` — CREATE
-- **Symbols:** `struct ODUpdatesSettingsView: View` with a toggle (enabled), a "Check Now" button, last-checked date, and a list of skipped bundle IDs with resume buttons.
-- **Behavior:** calls `ODUpdateChecker.shared.checkForUpdates(sources: Storage.shared.getSources(), localApps: …)`; reads/writes `ODSkippedUpdatesManager.shared`.
-- **Risk/rollback:** new file; delete to revert.
-
-### 8. `OdysseusTests/ODUpdateCheckerTests.swift` — CREATE
-- **Cases:** version comparison (≥6 cases); skip manager persistence + toggle; update matcher with a fake repository and a fake `AppInfoPresentable`; no-match and no-update cases.
-- **Note:** matching tests should avoid Core Data where possible by testing the pure matcher; if the checker is not decomposed, mark those cases **NOT RUN** until a seam exists.
-- **Build status:** tests can only run on macOS/Xcode; this sandbox is Linux → **NOT RUN** here.
-
-## Dependencies & project-setting changes
-- None required for Batch 1. AltSourceKit (`NBFetchService`) is already a dependency. No new entitlements.
-
-## Architecture / data-flow changes
-- Additive: a new backend manager and a `sourceURL` accessor. No change to the signing pipeline, persistence model, or install transports.
-
-## Security / privacy / migration
-- The checker fetches source repositories (already fetched by Odysseus). No new credentials. Skip list is local UserDefaults. No migration.
-
-## Acceptance criteria & tests
-1. `ODVersionCompare.isNewer` correct on the documented matrix.
-2. `ODSkippedUpdatesManager` persists across instances and excludes apps from the update set.
-3. `ODUpdateChecker` marks an app as updated only when a newer version exists in the app's source and it is not skipped.
-4. A source fetch failure does not crash the check or block others.
-5. Library shows an update affordance; Settings → Updates works.
-6. Existing tests remain green (`xcodebuild test`).
-
-## Rollback plan
-- Revert the four Batch-1 view/backend files and the `Storage+Shared.swift` witness (one-line-ish diff). No migration, no data written, so rollback is a clean revert.
-
-## User-visible behavior & limitations
-- Users see an "Update" indicator on Library apps with newer source versions, and can check/mute in Settings.
-- Limitations: matching is by bundle ID within the app's recorded source; apps imported without a source URL or signed with a changed bundle ID may not match (documented). No automatic update download in this batch.
-
-## Task-specific working branch
-- `feat/app-update-checker` (local), to be created from `arena/088597d5-odysseus` before implementation.
-
-## Proposed PR / commit (prepare only — do not create)
-- **PR title:** `feat(updates): add app update checker`
-- **PR description:** Adds on-device update detection comparing Library apps against their source repositories, with a per-app skip list and a Settings screen. Ported/adapted from RyukSign `AppUpdateChecker`/`SkippedUpdatesManager` (GPL-3.0) and Feather `UpdateManager` (GPL-3.0). No new dependencies or entitlements. Includes unit tests for version comparison, skip persistence, and matching.
-- **Branches:** target `arena/088597d5-odysseus`; working `feat/app-update-checker`.
-- **Conventional Commit:** `feat(updates): add app update checker`
-- **Changelog/release notes:** "Library now shows when a newer version is available in your sources. Manage updates and mute individual apps in Settings → Updates."
-- **Out of scope:** automatic updating, self-update, cross-source provenance metadata.
-
-## Verification statuses after Batch 1 (target)
-- `SOURCE_VERIFIED` ✓ (RyukSign/Feather code inspected)
-- `LICENSE_REVIEWED` ✓ (GPL-3.0; no new vendored files)
-- `IMPLEMENTED` — pending approval
-- `BUILD_VERIFIED` — pending (macOS/Xcode only)
-- `AUTOMATED_TESTED` — pending
-- `SIMULATOR_TESTED` / `PHYSICAL_DEVICE_TESTED` — not planned for this batch
-- `DOCUMENTED` — this plan + matrix
-
----
+- **Objective:** tell the user when a Library app has a newer version in one of their sources; per-app mute; Settings screen; manual "Check Now".
+- **Files:** 7 created (`ODVersionCompare`, `ODSkippedUpdatesManager`, `ODUpdateChecker`, `ODUpdatesSettingsView`, 3 test files), 4 modified (`ODPrefs`, `ODCatalogStore`, `ODLibraryView`, `ODSettingsView`).
+- **No** schema change, no new dependency, no new entitlement, no new network path, no new install path.
+- **Verification target:** `BUILD_VERIFIED` + `AUTOMATED_TESTED` via CI only; simulator/device testing not planned.
 
 # Batch 2 — Tweak Manager (R-TWEAKMGR-01) — summary
 

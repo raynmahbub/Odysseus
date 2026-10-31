@@ -18,6 +18,9 @@ final class Storage: ObservableObject {
 	private static let _managedObjectModel = _loadManagedObjectModel()
 	static let shared = Storage()
 	let container: NSPersistentContainer
+	/// Certificate passwords are secrets: they live in the keychain, not in
+	/// the Core Data store. Injected so tests can use an in-memory stand-in.
+	let certificatePasswords: ODCertificatePasswordStoring
 
 	private let _name = "Feather"
 	private enum StoreLoadState {
@@ -30,7 +33,12 @@ final class Storage: ObservableObject {
 	@Published private(set) var storeLoadError: Error?
 	@Published private(set) var isStoreLoaded = false
 
-	init(inMemory: Bool = false, storeURL: URL? = nil) {
+	init(
+		inMemory: Bool = false,
+		storeURL: URL? = nil,
+		passwordStore: ODCertificatePasswordStoring = ODKeychainCertificatePasswordStore.shared
+	) {
+		self.certificatePasswords = passwordStore
 		let model = Self._managedObjectModel
 		container = NSPersistentContainer(
 			name: _name,

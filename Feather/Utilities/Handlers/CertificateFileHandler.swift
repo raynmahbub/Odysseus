@@ -60,19 +60,31 @@ final class CertificateFileHandler: NSObject {
 	
 	@MainActor
 	func addToDatabase() async throws {
-		
-		Storage.shared.addCertificate(
-			uuid: _uuid,
-			password: _keyPassword,
-			nickname: _certNickname,
-			ppq: _certPair?.PPQCheck ?? false,
-			expiration: _certPair?.ExpirationDate ?? Date(),
-			isDefault: _isDefault,
-			playsFeedback: _playsFeedback,
-			checksRevocation: _checksRevocation
-		) { _ in
-			Logger.misc.info("[\(self._uuid)] Added to database")
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+			Storage.shared.addCertificate(
+				uuid: _uuid,
+				password: _keyPassword,
+				nickname: _certNickname,
+				ppq: _certPair?.PPQCheck ?? false,
+				expiration: _certPair?.ExpirationDate ?? Date(),
+				isDefault: _isDefault,
+				playsFeedback: _playsFeedback,
+				checksRevocation: _checksRevocation
+			) { error in
+				if let error {
+					continuation.resume(throwing: error)
+				} else {
+					continuation.resume()
+				}
+			}
 		}
+		Logger.misc.info("[\(self._uuid)] Added to database")
+	}
+
+	/// Removes the copied `.p12`/profile when the database write failed, so a
+	/// failed import cannot leave key material behind without a record.
+	func cleanup() {
+		try? FileManager.default.removeItem(at: FileManager.default.certificates(_uuid))
 	}
 	
 	private func _directory() async throws -> URL {

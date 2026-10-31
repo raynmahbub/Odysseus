@@ -13,6 +13,7 @@ The app currently leaks a certificate password through a URL, can dead-end the p
 
 ### ODY-001 — Percent-encode and gate certificate export
 - **Priority** P0 · **Complexity** S · **Depends on** —
+- **Status (Remediation 01, 2026-10-31): implemented** — `ODCertificateExport`, `ODDeviceAuthentication`, `FR.swift`; 9 tests. The raw-vs-base64 export format remains open.
 - **Files:** modify `Feather/Utilities/FR.swift` (`exportCertificateAndOpenUrl`), `Feather/FeatherApp.swift` (`_handleURL`), `Feather/Views/Settings/SettingsView.swift` (call site)
 - **Upstream:** none — the defect exists in the Feather lineage; do not "sync" it back
 - **Behaviour:** URL built with `URLComponents`/`percentEncodedQueryItems`; Face ID (or passcode) required before export, matching `ODAppleIDView.swift:310–316`; if the encoded URL exceeds 8 KB, present the share sheet with the `.p12` instead of a URL; the import handler accepts the same encoding it produces
@@ -22,6 +23,7 @@ The app currently leaks a certificate password through a URL, can dead-end the p
 
 ### ODY-002 — Make download/import failure terminal and specific
 - **Priority** P0 · **Complexity** M · **Depends on** —
+- **Status (Remediation 01, 2026-10-31): implemented for the failure paths** — `DownloadManager`, `ODSignPipeline.downloadFailed/importFailed`, `ODImportTracking`; 8 tests. A deterministic terminal event to replace the 3-second grace period is still outstanding.
 - **Files:** modify `Feather/Backend/Observable/DownloadManager.swift` (`didFinishDownloadingTo`, `didCompleteWithError`), `Feather/Backend/Odysseus/ODSignPipeline.swift` (`downloadEnded`, `_didImport`), `Feather/Utilities/FR.swift` (error surface)
 - **Behaviour:** import failure removes the row, cleans the temp file and publishes `ODSignError.importFailed(reason:)`; the 3-second timer is replaced by an explicit terminal event; a late import still signs (BUG-004); network failures keep their `Error` and offer retry
 - **Acceptance:** after a forced import error the library row is gone, a message names the cause, and the app can re-download; a 5-second import still reaches `.signing`
@@ -46,6 +48,7 @@ The app currently leaks a certificate password through a URL, can dead-end the p
 
 ### ODY-005 — Local-network declaration and loopback binding
 - **Priority** P0 · **Complexity** S · **Depends on** —
+- **Status (Remediation 01, 2026-10-31): partially implemented** — `NSLocalNetworkUsageDescription` added and routes moved under a per-install secret (`ODInstallRouteSet`); the bind address is unchanged because the Semi Local transport needs it. Loopback binding and explicit permission-denial handling remain open.
 - **Files:** modify `Feather/Resources/Info.plist`, `Feather/Backend/Server/ServerInstaller+TLS.swift:36`, `ServerInstaller.swift`
 - **Behaviour:** add `NSLocalNetworkUsageDescription`; bind `127.0.0.1` unless the selected transport genuinely needs LAN access; handle permission denial with an explanatory error
 - **Acceptance:** D-09 shows an explanation, not a hang; plist invariant test passes
@@ -76,6 +79,7 @@ The app currently leaks a certificate password through a URL, can dead-end the p
 
 ### ODY-102 — Certificate store: keychain password, file protection, backup exclusion
 - **Priority** P0 · **Complexity** M · **Depends on** ODY-101
+- **Status (Remediation 01, 2026-10-31): partially implemented** — keychain storage with read-time migration and fail-closed deletion (`ODCertificatePasswordStore`, `Storage+Certificate`; 5 tests). File protection, backup exclusion and the `Documents/` exposure are **not** done.
 - **Files:** modify `Feather/Backend/Storage/Storage+Certificate.swift`, `Feather/Utilities/Handlers/CertificateFileHandler.swift`, `Feather/Backend/AppleID/ODKeychain.swift`; create `Feather/Backend/Certificates/ODCertificateStore.swift`
 - **Behaviour:** `.p12` password migrates from the Core Data attribute to the keychain (one-time migration on launch, old value nulled); certificate directory gets `completeUntilFirstUserAuthentication` protection and `isExcludedFromBackup`; delete uses quarantine semantics
 - **Acceptance:** after migration the Core Data attribute is empty for every record; `NSFileProtection` attribute is set on the directory; delete failure keeps the record and informs the user
@@ -104,6 +108,7 @@ The app currently leaks a certificate password through a URL, can dead-end the p
 
 ### ODY-201 — Verify what was signed
 - **Priority** P1 · **Complexity** L · **Depends on** ODY-101
+- **Status (Remediation 01, 2026-10-31): not started, but the "failures converted into success" concern was checked and dismissed** — `ZsignHandler` already fails closed on a false return, a missing callback, a failed callback and a missing signature. The presence-check limitation stands.
 - **Files:** create `Feather/Backend/Signing/ODSignatureVerifier.swift`; modify `Feather/Utilities/Handlers/ZsignHandler.swift`
 - **Behaviour:** replace the `checkSigned` presence check with verification of the code-directory hash, entitlements presence, bundle-id match against the profile, and that every nested Mach-O is signed
 - **Acceptance:** a fixture signed with a mismatched bundle id is rejected; a valid fixture passes; failure names the failing component

@@ -12,7 +12,7 @@
 
 **Most of the hard part exists; the edges are missing.**
 
-118 capabilities were assessed across eight groups:
+118 capabilities were assessed across eight groups at the audit commit. **Remediation 01 (2026-10-31)** has since fixed ODY-BUG-001/002/003/004/006 and moved four matrix rows (see `REMEDIATION_01_REPORT.md`); the counts below describe the audited revision.
 
 | Status | Count | Share |
 |---|---|---|

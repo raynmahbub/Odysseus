@@ -12,6 +12,7 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-001 — Certificate export writes an unencoded password into a URL
 - **Severity:** High · **Area:** certificates · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31):** fixed the encoding, added a Face ID/passcode gate and a destination disclosure (`ODCertificateExport`, `ODDeviceAuthentication`); the raw-vs-base64 exporter/importer mismatch is **still open**. See `REMEDIATION_01_REPORT.md` §3.1.
 - **Files:** `Feather/Utilities/FR.swift:164–223` (template substitution at `:185`, `UIApplication.open` at `:189`), consumed by `Feather/FeatherApp.swift:97–144` and `Feather/Views/Settings/SettingsView.swift:220–231`
 - **Root cause:** the export takes a caller-supplied template (documented example: `livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)`) and substitutes both values by string interpolation (`:183–185`). The certificate is percent-encoded; the password is not encoded at all.
 - **Impact:** any password containing `&`, `+`, `#`, `%`, `?` or a space truncates or corrupts the import on the receiving side — the exported backup silently fails to restore. There is a second, independent defect on the same path: the exporter writes the password **raw**, while Odysseus's own importer (`FeatherApp.swift:104–108`) expects it **base64-encoded**, so exporting from Odysseus and importing back into Odysseus cannot work for any password. The template comment (`FeatherApp.swift:148–150`) documents the raw-password form because the feature was built for LiveContainer's importer, not this app's. Independently, the credential is exposed in a URL (see `ODYSSEUS_SECURITY_REVIEW.md` S-01/S-02).
@@ -20,6 +21,7 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-002 — A failed import leaves the download row stuck forever
 - **Severity:** High · **Area:** downloads · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31):** fixed — the failure path removes the row, deletes the partial file and reports through `ODSignPipeline.downloadFailed`. See `REMEDIATION_01_REPORT.md` §3.4.
 - **File:** `Feather/Backend/Observable/DownloadManager.swift:199–219` (catch at `:216–218`)
 - **Root cause:** inside `urlSession(_:downloadTask:didFinishDownloadingTo:)` the create/move/import sequence is wrapped in `do/catch`, and the `catch` only calls `print`. The `Download` object is not removed from `downloads`, `ODSignPipeline.downloadEnded` is not called, and no failure is published.
 - **Impact:** a disk-full device, a filename collision, or a sandbox write error leaves a permanently "downloading" library row; the user cannot cancel it into a clean state, retry, or see why. `ODSignPipeline._pendingGets` also keeps the id, so the same app cannot be re-fetched.
@@ -28,6 +30,7 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-003 — Import errors are reported as "Download failed"
 - **Severity:** Medium · **Area:** downloads/pipeline · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31):** fixed — import errors now reach `ODSignPipeline.importFailed` and produce an import-specific message. See `REMEDIATION_01_REPORT.md` §3.4.
 - **Files:** `DownloadManager.swift:171–197` (`err` only triggers a haptic), `ODSignPipeline.swift:346–358`
 - **Root cause:** `FR.handlePackageFile`'s completion error is discarded; `downloadEnded` then sees no download and, after 3 s, publishes the generic `.failed("Download failed")`.
 - **Impact:** the most common user-visible failure (a corrupt or password-protected IPA) is attributed to the network, so users retry downloads instead of fixing the file, and diagnostics cannot distinguish the two cases.
@@ -36,6 +39,7 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-004 — The 3-second download-end timer can cancel a slow import
 - **Severity:** Medium · **Area:** downloads/pipeline · **Status:** confirmed by code logic; not reproduced
+- **Remediation 01 (2026-10-31):** fixed — `ODImportTracking` keeps the id recoverable after the timer, so a late import is still signed. See `REMEDIATION_01_REPORT.md` §3.4.
 - **File:** `ODSignPipeline.swift:346–358`; competing path `:360–377`
 - **Root cause:** `downloadEnded` waits 3 s and then marks the phase failed if it is still `.downloading`. `_didImport` begins with `guard _pendingGets.remove(downloadID) != nil else { return }`. If the import takes longer than 3 s (a 1–2 GB IPA, or a busy device), the timer removes `_pendingGets`, so the late import notification is **discarded**.
 - **Impact:** the app is imported into the library but never signed; the UI says "Download failed"; the user retries and ends up with a duplicate import.
@@ -52,6 +56,7 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-006 — Deleting a certificate can silently leave the private key on disk
 - **Severity:** Medium (security-relevant) · **Area:** certificates · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31):** fixed — deletion removes files first, keeps the record and returns `false` on failure, and removes the keychain secret only after the files are gone. See `REMEDIATION_01_REPORT.md` §3.2.
 - **File:** `Feather/Backend/Storage/Storage+Certificate.swift:46–52`
 - **Root cause:** `try? FileManager.default.removeItem(at: url)` swallows the failure and the Core Data record is deleted regardless.
 - **Impact:** an orphaned `.p12` remains in `Documents/Feather/Certificates/<UUID>/` after the user "deletes" a compromised certificate — exactly when deletion matters.
@@ -132,6 +137,7 @@ Severity: **Critical** = data/credential loss or silent corruption · **High** =
 
 ### ODY-BUG-016 — `print` bypasses the diagnostics pipeline
 - **Severity:** Low · **Area:** diagnostics · **Status:** confirmed in source
+- **Remediation 01 (2026-10-31):** partially fixed — the import-failure path now logs via `Logger`; the two occurrences in `BackgroundAudioManager` and `BackgroundTaskManager` remain.
 - **Files:** `DownloadManager.swift:217`, `BackgroundAudioManager.swift:37`, `BackgroundTaskManager.swift:46`
 - **Impact:** the one error message that explains BUG-002 is invisible to `ODDiagnosticsView`, which exports `OSLog` only. The export claims to help diagnose failures it cannot see.
 - **Fix:** replace with `Logger.misc.error`, then delete the prints.
@@ -185,3 +191,24 @@ Recorded so it is not re-audited:
 - Retain-cycle scan of closures capturing `self` in long-lived managers found no cycle.
 - `ODOCSPChecker` verifies signature, responder authorisation, Apple trust anchor and freshness before trusting a response.
 - The local TLS identity is generated per device with `0o700`/`0o600` and `completeFileProtection`; the server refuses to start without it.
+
+---
+
+## 5. Remediation status (Remediation 01, 2026-10-31)
+
+| ID | Status | Where |
+|---|---|---|
+| ODY-BUG-001 | Partially fixed (encoding + gate + destination; format mismatch open) | `ODCertificateExport.swift`, `FR.swift` |
+| ODY-BUG-002 | Fixed | `DownloadManager.swift` |
+| ODY-BUG-003 | Fixed | `DownloadManager.swift`, `ODSignPipeline.importFailed` |
+| ODY-BUG-004 | Fixed | `ODImportTracking.swift`, `ODSignPipeline.swift` |
+| ODY-BUG-005 | Open (needs device validation) | — |
+| ODY-BUG-006 | Fixed | `Storage+Certificate.deleteCertificate` |
+| ODY-BUG-007 | Open | — |
+| ODY-BUG-008 / 009 / 010 | Open | — |
+| ODY-BUG-011 – 015 | Open | — |
+| ODY-BUG-016 | Partially fixed (1 of 3 sites) | `DownloadManager.swift` |
+| ODY-BUG-017 | Open | — |
+| T-01 … T-08 | Theoretical, untouched | — |
+
+Test coverage for the fixed defects lives in `ODCertificateExportTests`, `ODCertificateSecretStorageTests`, `ODImportTrackingTests` and `ODInstallRouteSetTests`. **None of those tests has been executed**; this environment cannot build the project (`REMEDIATION_01_REPORT.md` §5).

@@ -99,6 +99,9 @@ enum FR {
 					completion(nil)
 				}
 			} catch {
+				// The record was not created: do not leave the copied `.p12`
+				// and profile behind without one.
+				handler.cleanup()
 				await MainActor.run {
 					completion(error)
 				}
@@ -162,7 +165,25 @@ enum FR {
 
 	@MainActor
 	static func exportCertificateAndOpenUrl(using template: String) {
-		// Helper that performs the export for a given certificate
+		// Validate the template once and work out where the certificate would
+		// actually go, so the confirmation can name the destination instead of
+		// asking the user to trust an opaque link.
+		guard
+			let previewURL = ODCertificateExport.makeURL(
+				template: template,
+				certificateBase64: "",
+				password: ""
+			)
+		else {
+			UIAlertController.showAlertWithOk(
+				title: .localized("Couldn't export"),
+				message: .localized("The certificate link is not valid.")
+			)
+			return
+		}
+
+		let destination = ODCertificateExport.destinationDescription(for: previewURL)
+
 		func performExport(for certificate: CertificatePair) {
 			guard
 				let certificateKeyFile = Storage.shared.getFile(.certificate, from: certificate),
@@ -170,55 +191,69 @@ enum FR {
 			else {
 				return
 			}
-			
-			let base64encodedCert = certificateKeyFileData.base64EncodedString()
-			
-			var allowedQueryParamAndKey = NSCharacterSet.urlQueryAllowed
-			allowedQueryParamAndKey.remove(charactersIn: ";/?:@&=+$, ")
-			
-			guard let encodedCert = base64encodedCert.addingPercentEncoding(withAllowedCharacters: allowedQueryParamAndKey) else {
+
+			guard
+				let callbackURL = ODCertificateExport.makeURL(
+					template: template,
+					certificateBase64: certificateKeyFileData.base64EncodedString(),
+					password: Storage.shared.password(for: certificate) ?? ""
+				)
+			else {
+				// Refusing is safer than handing over a truncated link.
+				UIAlertController.showAlertWithOk(
+					title: .localized("Couldn't export"),
+					message: .localized("This certificate is too large to hand over as a link.")
+				)
 				return
 			}
-			
-			let urlStr = template
-				.replacingOccurrences(of: "$(BASE64_CERT)", with: encodedCert)
-				.replacingOccurrences(of: "$(PASSWORD)", with: certificate.password ?? "")
-			
-			guard let callbackUrl = URL(string: urlStr) else {
-				return
-			}
-			
-			UIApplication.shared.open(callbackUrl)
+
+			UIApplication.shared.open(callbackURL)
 		}
-		
+
 		let certificates = Storage.shared.getAllCertificates()
 		guard !certificates.isEmpty else { return }
-		
+
 		DispatchQueue.main.async {
 			var selectionActions: [UIAlertAction] = []
-			
+
 			for cert in certificates {
 				var title: String
 				let decoded = Storage.shared.getProvisionFileDecoded(for: cert)
-				
+
 				title = cert.nickname ?? decoded?.Name ?? .localized("Unknown")
-				
+
 				if let getTaskAllow = decoded?.Entitlements?["get-task-allow"]?.value as? Bool, getTaskAllow == true {
 					title = "🐞 \(title)"
 				}
-				
+
 				let selectAction = UIAlertAction(title: title, style: .default) { _ in
-					performExport(for: cert)
+					Task { @MainActor in
+						// The `.p12` is the signing identity: require the device
+						// owner before it leaves the app, and fail closed when no
+						// passcode is configured.
+						guard await ODDeviceAuthentication.authenticate(
+							reason: .localized("Export your signing certificate")
+						) else {
+							UIAlertController.showAlertWithOk(
+								title: .localized("Authentication needed"),
+								message: .localized("Confirm it's you before exporting a certificate. If this device has no passcode, set one first.")
+							)
+							return
+						}
+
+						performExport(for: cert)
+					}
 				}
 				selectionActions.append(selectAction)
 			}
-			
+
 			UIAlertController.showAlertWithCancel(
 				title: .localized("Export Certificate"),
-				message: .localized("Do you want to export your certificate to an external app? That app will be able to sign apps using your certificate."),
+				message: .localized("Do you want to export your certificate to an external app? That app will be able to sign apps using your certificate.\n\nDestination: %@", arguments: destination),
 				style: .alert,
 				actions: selectionActions
 			)
 		}
 	}
+
 }

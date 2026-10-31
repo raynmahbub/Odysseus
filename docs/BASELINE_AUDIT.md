@@ -1,125 +1,196 @@
-# Odysseus baseline source audit
+# Odysseus baseline source audit (re-verified)
 
 **Audit date:** 2026-10-31 (UTC)
-**Repository revision:** `2664dadedf9aca36fda0925a8aada92e2c79323f` (`Fix tint presets list`)
-**Working branch:** `arena/438d62e5-odysseus`
-**Scope:** establish the existing app, architecture, implementation state, build evidence, and highest-risk defects before feature integration. This is a static source audit plus a review of the existing GitHub Actions result; it is not an iOS device-security certification.
+**Repository revision:** `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` (`fix(ios): replace deprecated SwiftUI onChange handlers`)
+**Working branch:** `arena/088597d5-odysseus` (== `master` at this revision; no divergence yet)
+**Previous audit:** `docs/BASELINE_AUDIT.md` at revision `2664dadedf9aca36fda0925a8aada92e2c79323f`, branch `arena/438d62e5-odysseus`
+**Scope:** re-establish the current app, architecture, implementation state, build evidence, and highest-risk defects against the **current** working tree before feature integration. Static source audit plus review of the existing GitHub Actions result. Not an iOS device-security certification.
 
-## Executive summary
+> **How to read this file.** Every finding below is tagged **RECHECKED** (re-examined against the current tree at `2a54e3b`), **NEW** (first recorded here), or **STALE** (present in the previous audit but no longer true / no longer present). The previous audit is preserved verbatim in [Appendix A](#appendix-a-previous-audit-2664dad).
 
-Odysseus is a substantial Feather-derived iOS app, not a template. It has a SwiftUI storefront and library, AltStore-style source fetching, certificate-based Zsign signing, a SideSign-based Apple ID signing path, certificate-status checks, and two installation paths. The newer Odysseus code shares existing Feather storage and signing machinery rather than replacing it wholesale. This is a useful foundation for controlled integration.
+---
 
-There is also real build evidence: the exact baseline commit passed the existing macOS GitHub Actions build on 2026-10-07. That job produced and uploaded the IPA and completed its nightly-publish step. It did **not** run tests or validate installation/signing on a device. The local audit environment is Linux and has neither `xcodebuild` nor Swift, so I could not reproduce that build locally.
+## 0. Repository state — verified at `2a54e3b`
 
-**Do not treat the README feature list as an end-to-end verification.** The audit found a likely live TLS private key embedded in build artifacts, a post-signing bundle mutation, unsafe Core Data queue use in detached tasks, and signing-error propagation gaps. These should be addressed and covered by tests before adding more signing/install implementations.
-
-## What is in the repository
-
-- One Xcode application target and shared scheme: internally named **Feather**, product/display name **Odysseus**. The iOS deployment target is 17.0; iPhone and iPad are targeted. The project enables Mac Catalyst, and `Makefile` has a Catalyst target, but CI only builds the iOS IPA.
-- App code remains in the `Feather/` tree. Odysseus additions are mainly under `Backend/Odysseus`, `Backend/AppleID`, `Backend/Certificates`, and `Views/Odysseus`; existing Feather screens and handlers remain in use.
-- Local packages: AltSourceKit and NimbleKit. Git submodules: Zsign and IDeviceKitten. I initialized the two pinned submodules for this audit; CI already checks them out recursively.
-- Project dependencies also include Vapor, Zip, SWCompression, Nuke, LicensePlist, BitByteData, SideSign and its Apple ID/anisette dependencies, OpenSSL, and the IDevice binary framework. SideSign is vendored under its own AGPL-3.0 license; root/third-party license files and `license_plist.yml` are present.
-- There is a Core Data model named `Feather`, a shared `Feather` workspace, a shared `Feather` scheme, and one app target. I found no test sources, test target, or test plan; the scheme's `TestAction` has no testables.
-
-## Architecture and ownership today
-
-| Concern | Current owner / path | Audit assessment |
+| Fact | Value | Status |
 |---|---|---|
-| App/UI | SwiftUI `ODRootView`, `ODDiscoverView`, `ODLibraryView`, `ODSettingsView`; Feather views retained | Coherent user-facing Odysseus layer, but still one app target with legacy and new screens mixed together. |
-| Source/catalog | `SourcesViewModel`, `ODCatalogStore`, `ODCatalog`; AltSourceKit + NimbleJSON | Sources are persisted in Core Data; catalog is assembled in memory. No source/catalog test suite. |
-| Persistence/files | `Storage` and `Storage+…` extensions; `Documents/{Signed,Unsigned,Certificates,Archives}` | Core Data view context plus filesystem payloads; current queue and recovery behavior needs hardening. |
-| Signing | `ODSignPipeline` → Feather `SigningHandler` → `ZsignHandler`/Zsign | One shared route selects imported certificate or Apple ID, which is a good integration point. Zsign's error contract is not safely consumed. |
-| Apple ID | `ODAppleIDManager`, `ODKeychain`, SideSign | Implements login/2FA, anisette, team/certificate/device/App ID/profile work, and export; live Apple portal behavior/device signing remains unverified. |
-| Revocation | `ODOCSPChecker`, `ODOCSPCore`, `ODX509`, `ODDER`, `ODCertificateStatusStore` | Substantial custom OCSP implementation; freshness and signature-verification outcomes need security tests. |
-| Installation | `ArchiveHandler`, Vapor `ServerInstaller`, IDevice/InstallationProxy pairing path | Both paths exist in code. The default server mode is semi-local; platform/entitlement behavior and actual installs need device testing. |
-| CI | `.github/workflows/build.yml`, `Makefile` | One build/release workflow, no test/lint/static-analysis job. The IPA packaging path has security and signature-order concerns below. |
+| Root | `/home/user/Odysseus` | RECHECKED |
+| Remote | `https://github.com/raynmahbub/Odysseus.git` (`origin`) | RECHECKED |
+| HEAD | `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` | RECHECKED |
+| `master` | `2a54e3bfaa7749e047f5ab14477bcc6501b24f6d` (identical to HEAD) | RECHECKED |
+| Working branch | `arena/088597d5-odysseus` | RECHECKED |
+| Working tree | clean (`git status --porcelain` empty) | RECHECKED |
+| History depth | **single commit** — the repository was squashed/imported; `git log` shows one commit | NEW |
+| Tag | `nightly` → `2a54e3b` | RECHECKED |
+| Submodules pinned | `Zsign` @ `6ffe703df73ef9069adacdbb19d571f11a69a801` (`khcrysalis/Zsign-Package`, branch `package`); `IDeviceKitten` @ `837cf1e14d4875771dd5ee1b754a4c86215c5db3` (`khcrysalis/IDeviceKit`) | RECHECKED |
+| Submodules initialized | **NO** — both submodule working trees are empty in this checkout (`git submodule status` shows `-`) | NEW |
 
-`ODSignPipeline` is the strongest existing integration seam: Discover's Get flow, direct signing, and Apple ID/certificate selection converge there. New signing or installation mechanisms should be introduced as explicit adapters behind this path, not as parallel UI-specific flows.
+**Consequence:** a local `xcodebuild` in this sandbox is impossible twice over — the checkout is Linux (no `xcodebuild`, no `swiftc`), and the two git submodules are not populated. CI populates them with `submodules: recursive`.
 
-## Feature status: source presence versus proof
+## 1. Project shape
 
-| Capability | Source status | What is / is not verified |
+- **One Xcode application target**, internally named `Feather`, product/display name `Odysseus`.
+- **One shared scheme** `Feather`. `Feather.xcworkspace` + `Feather.xcodeproj`.
+- **Deployment target:** `IPHONEOS_DEPLOYMENT_TARGET = 17.0`; `TARGETED_DEVICE_FAMILY = "1,2"` (iPhone + iPad). Mac Catalyst is enabled in the project and `Makefile` has a Catalyst target, but **CI only builds the iOS IPA**.
+- **Swift:** `SWIFT_VERSION = 5.0` (project-level). SideSign's own package uses `swift-tools-version: 6.0` with `swiftLanguageModes: [.v6]`.
+- **Bundle ID:** `com.mirazbakis.Odysseus` (+ `$(FEATHER_DISAMBIGUATOR)` disambiguator at build).
+- **Code signing:** `CODE_SIGN_STYLE = Manual`; `DEVELOPMENT_TEAM` in the *project* is `566RT33SA2`, the *target* is empty (`""`); the Makefile builds with `CODE_SIGNING_ALLOWED=NO` and adhoc-signs the payload.
+- **Entitlements:** `Feather/Supporting Files/Feather.entitlements` contains **only `get-task-allow`** (verified). See §7.
+- **Test target:** present — `com.mirazbakis.OdysseusTests` (`OdysseusTests/`), `TEST_HOST`/`BUNDLE_LOADER` wired to the app; 16 XCTest cases across 6 files. **This is NEW since the previous audit** (which reported "no test sources").
+
+### Dependencies
+
+Local Swift packages (vendored in-repo): `AltSourceKit`, `NimbleKit`, `Zsign` (submodule), `IDeviceKitten` (submodule), `SideSign` (vendored under `SideSign/`, from SideStore/Catalyst).
+
+Remote SPM packages (declared in `project.pbxproj`, **no root `Package.resolved`**): `vapor`, `Nuke`, `Zip`, `SWCompression`, `LicensePlist`, `BitByteData`.
+
+`SideSign/Package.swift` pulls: `apple/swift-crypto` (exact 4.3.1), `mahee96/CodeSignKit` (branch `main`), `mahee96/GSACryptoKit` (branch `main`), `SideStore/libdeflate` (branch `master`), `mahee96/AnisetteKit` (branch `main`). `SideSign/Package.resolved` pins revisions but the app consumes SideSign as a local package, so the *root* build is not locked.
+
+`license_plist.yml` documents third-party licenses (idevice MIT, Zsign, ElleKit, SideSign AGPL-3.0, LiveContainer via `Zsign/LICENSE_LC`).
+
+## 2. Module map (current tree)
+
+| Concern | Paths | Notes |
 |---|---|---|
-| Discover storefront, search, categories, featured/recent rows, duplicate grouping | Implemented in source | No catalog tests or live source compatibility matrix. |
-| Add/import/export AltStore-style sources, QR scanning, automatic refresh | Implemented in source | No retry/failure tests; source fetch behavior is not validated against hostile or malformed feeds. |
-| Import IPA/TIPA, library organization, app customization, tweak injection | Implemented in Feather/Odysseus handlers and views | Not exercised on-device in this audit. |
-| Sign with imported `.p12` + `.mobileprovision` | Implemented through Zsign | Build success does not establish that every signing result is valid; error handling has a high-priority defect below. |
-| Apple ID signing | Implemented through SideSign and Zsign | Live Apple authentication, profile issuance, free-account limits, and installation require device/account tests. The anisette endpoint is a configurable external service. |
-| OCSP status, notifications, expiry reminders, revoked-certificate policy | Implemented in source | Not covered by tests; OCSP freshness/signature handling is not strong enough to call security-verified. |
-| Local server and pairing-file/LocalDevVPN install | Implemented in source | No device result in this audit. `Feather.entitlements` contains only `get-task-allow`; documentation notes fully local mode depends on entitlements, while semi-local mode is the registered default. |
-| Features from FeatherPlus, KSign, RyukSign, FlareStore, LiveContainer, SideStore, Zeus, and FlekDeck | Not audited/integrated in this phase | Their source trees, exact feature provenance, compatibility, and licenses remain Phase 2 work. Current code credits SideSign/SideStore and a LiveContainer Mach-O fix; those credits do not mean the full reference apps are integrated. |
+| App entry / lifecycle / URL schemes | `Feather/FeatherApp.swift`, `AppDelegate` | `odysseus://` schemes: `select-certificate`, `switch-certificate`, `import-certificate`, `export-certificate`, `source/<url>`, `install/<url>`; file-type handlers for `.ipa`/`.tipa` |
+| Storefront / catalog | `Feather/Views/Odysseus/Discover/*`, `Feather/Views/Odysseus/ODRootView.swift`, `ODCatalogStore.swift`, `ODCatalog.swift` | Discover (featured / New & Updated / Recently Added / Categories / Sources / search); iOS 18+ TabView + search tab; iPad sidebar; iOS 26 liquid-glass tab bar |
+| Sources | `Feather/Views/Sources/*`, `Feather/Backend/Storage/Storage+Sources.swift`, `Feather/Backend/Services/DefaultSourceInstaller.swift`, `AltSourceKit` | AltStore/ESign sources; add by URL or QR; import/export; auto-refresh; default sources from `Resources/DefaultSources.json` |
+| Library | `Feather/Views/Odysseus/Library/ODLibraryView.swift`, `ODCertificateCards.swift`, `Feather/Views/Library/*`, `Storage+Imported.swift`, `Storage+Signed.swift` | Signed / Downloaded / Imported; expiry pills; certificate revocation cards |
+| Signing pipeline | `Feather/Backend/Odysseus/ODSignPipeline.swift`, `Feather/Utilities/FR.swift`, `Feather/Utilities/Handlers/{SigningHandler,ZsignHandler,TweakHandler,AppFileHandler,ArchiveHandler,CertificateFileHandler}.swift` | One route: pick identity (cert or Apple ID) → revocation gate → bundle-ID adjust → zsign → install. Strongest existing seam. |
+| Apple ID signing | `Feather/Backend/AppleID/ODAppleIDManager.swift`, `ODKeychain.swift`, `Views/Odysseus/Settings/ODAppleIDView.swift`, vendored `SideSign/` | Login + 2FA, anisette, team/cert/device/AppID/profile, p12 export |
+| OCSP revocation | `Feather/Backend/Certificates/ODOCSP*.swift`, `ODX509.swift`, `ODDER.swift`, `ODCertificateStatusStore.swift`, `ODCertificateStatusStore` + tests | Custom RFC 6960 client + DER parser; freshness + responder-authorization checks |
+| Installation | `Feather/Backend/Server/ServerInstaller*.swift`, `ODLocalServerTLS.swift`, `Feather/Views/Odysseus/Install/ODInstallSheet.swift`, `Feather/Views/Library/Install/InstallPreviewView.swift`, IDevice pairing path | Semi-local (default) + fully-local (TLS identity) server; pairing-file + LocalDevVPN path |
+| Persistence | `Feather/Backend/Storage/Storage*.swift`, `Feather.xcdatamodeld/` | Core Data; main-actor view context; background contexts for writes; quarantine/restore on delete |
+| Preferences | `Feather/Backend/Odysseus/ODPrefs.swift`, `Feather/Backend/Observable/OptionsManager.swift` | Settings keys centralized in `ODPrefs`; signing `Options` struct |
+| Diagnostics | `Feather/Views/Odysseus/Settings/ODDiagnosticsView.swift`, `Feather/Extensions/Logger++.swift`, `Feather/Utilities/FileLogger.swift`? (not present) | OSLog + log export |
+| Tweaks / customization | `Feather/Utilities/Handlers/TweakHandler.swift`, `Feather/Views/Signing/*`, `Feather/Utilities/ARDecompression/*`, `Feather/Utilities/CertificateReader/*`, `Feather/Utilities/MachO/MachOUtils.m` | dylib/deb/framework/bundle injection; ElleKit; Liquid Glass + arm64e Mach-O fixups (ported from LiveContainer, Apache-2.0) |
+| Tests | `OdysseusTests/*.swift` | Zsign outcome, OCSP core/freshness/responder-auth, Core Data concurrency, Apple ID material cleanup |
 
-## Findings to resolve before broad integration
+## 3. Feature presence vs proof
+
+| Capability | Source status | Evidence / gaps |
+|---|---|---|
+| Discover storefront, search, categories, featured/recent rows, duplicate grouping | Implemented | `ODDiscoverView`, `ODCatalog`. No catalog unit tests. |
+| Sources: add/import/export, QR, auto-refresh, default sources | Implemented | `SourcesAddView`, `ODQRScannerView`, `SourcesViewModel`, `DefaultSourceInstaller`. No retry/failure tests. |
+| Import IPA/TIPA, library organization, expiry pills | Implemented | `AppFileHandler`, `ODLibraryView`. Not exercised on-device. |
+| Sign with `.p12` + `.mobileprovision` (Zsign) | Implemented | `ZsignHandler` + `ODZsignOutcome.validate`. Build success ≠ every sign result valid. |
+| Apple ID signing | Implemented | `ODAppleIDManager` + SideSign. Live portal behavior unverified. |
+| OCSP status, notifications, expiry reminders, revoked policy | Implemented | `ODOCSP*` + tests for parser/freshness/authz. Live Apple interoperability unverified. |
+| Local server + pairing install | Implemented | `ServerInstaller*`, IDevice path. No device result in this audit. |
+| Tweaks & app customization | Implemented (Feather-derived) | `TweakHandler`, `SigningHandler` modifications. |
+| App update checker | **Absent** | Upstream Feather has `Backend/Observable/UpdateManager.swift` + `Storage+SourceMetadata.swift`; RyukSign has `AppUpdateChecker`. Odysseus does not. Candidate. |
+| Bulk/batch signing | **Absent** | Ksign `BulkSigningView`; RyukSign `BatchJobRunner`/`BatchSignView`. Candidate. |
+| File manager / hex/plist editor | **Absent** | Ksign `Views/Files/*`. Candidate. |
+| Web/WebDAV file transfer server | **Absent** | RyukSign `WebManagerServer*`. Candidate. |
+| Live Activities / Dynamic Island download progress | **Absent** | RyukSign `DownloadManager+LiveActivity.swift`. Candidate. |
+| App container / live app hosting | **Absent** (only Mach-O fixup ported) | LiveContainer / FlekDeck. Separate feasibility workstream (§7). |
+| SideStore refresh / untethered install | **Absent** | SideStore. Large integration; see matrix. |
+
+## 4. Findings — status at `2a54e3b`
 
 Severity is a prioritization aid, not a formal CVSS score.
 
-### Critical — build artifacts appear to contain a shared TLS private key
+### 4.1 Critical — shared TLS private key packaging — **RECHECKED / RESOLVED**
 
-`Makefile:21–24` downloads `pack.json`, extracts `.key1` and `.key2` into `deps/server.pem`, then `Makefile:49` copies all of `deps/` into the built app bundle and IPA. `ServerView.ServerPackModel` reconstructs the same `key1 + key2` value, `FR.downloadSSLCertificates` writes it as `server.pem`, and `ServerInstaller+TLS` loads that file as its TLS private key. This is therefore not just a certificate-chain file: the build path packages the server private key used by the app.
+The previous audit reported that `Makefile` downloaded `backloop.dev/pack.json` and bundled `.key1`/`.key2` as `deps/server.pem`, copied into the app and IPA.
 
-If the endpoint returns a live key for the advertised certificate, every distributed IPA discloses it. Treat that key as public/compromised and rotate it at its owner; do not distribute a shared server private key in the app. Replace this with per-device key generation or a design that does not ship a private key. The endpoint was not fetched during this audit.
+**Current state: RESOLVED.** The current `Makefile` no longer downloads any pack; the `clean` target removes `deps cert.json`. `ODLocalServerTLS.removeLegacySharedMaterial()` runs at launch and removes legacy `Documents/server.pem`/`server.crt`/`commonName.txt`. Fully Local mode now requires the user to import a matching certificate chain + private key + hostname (`ODLocalServerTLS`, `ServerView`). Semi Local (default) needs no TLS private key in-app.
 
-### High — the IPA bundle is modified after it is code-signed
+**Residual:** the old endpoint was never fetched during the previous audit, so the status of any formerly-distributed key is unknown. The repo no longer ships it, but that does not revoke copies already distributed. Owner must rotate/revoke if real.
 
-`Makefile:48` runs `codesign`, then `Makefile:49` copies the certificate, private key, and common-name files into the `.app`. Those post-signing resource changes invalidate the bundle's existing code-signature seal. The workflow only checks that `packages/Odysseus.ipa` exists (`build.yml:64–70`); it does not verify the packaged app signature. This is consistent with a workflow that can pass while producing an IPA that fails signature verification or installation. Copy required resources before signing and add a macOS `codesign --verify`/IPA inspection check.
+### 4.2 High — IPA bundle modified after code-signing — **RECHECKED / RESOLVED**
 
-### High — Core Data's main-queue context is accessed from detached work
+Previously `codesign` ran, then resources were copied into the `.app`, invalidating the seal. **Current `Makefile` copies the app into `Payload/` and *then* adhoc-signs**; `scripts/verify_ipa.sh` runs in CI after packaging. **RESOLVED.**
 
-`Storage.context` is `container.viewContext` (`Storage.swift:31–33`). Both `FR.handlePackageFile` and `FR.signPackageFile` start `Task.detached` work (`FR.swift`), while `AppFileHandler.addToDatabase` creates an `Imported` object via `Storage.addImported`, and `SigningHandler` reads/manipulates managed objects and creates a `Signed` object via `Storage.addSigned`. Those operations use the view context outside its main queue. This can trigger Core Data concurrency violations, dropped imports, or nondeterministic state. Keep all view-context access on its owning actor/queue (or move the workflow to a private context and pass value snapshots).
+### 4.3 High — Core Data view-context accessed from detached work — **RECHECKED / RESOLVED**
 
-### High — Zsign failures can be reported as success or leave a broken Library entry
+`Storage` is `@MainActor`; `addImportedAsync`/`addSignedAsync` write on private background contexts; only permanent object IDs and value snapshots cross queues. `StorageConcurrencyTests` covers concurrent background writes. **RESOLVED.**
 
-`ZsignHandler.sign()` discards the Boolean returned by `Zsign.sign()` (`ZsignHandler.swift:52–83`). The Zsign C wrapper can return early without invoking its completion callback, leaving `hadError` nil. In addition, `SigningHandler.modify()` moves the result and inserts the `Signed` Core Data record before checking `hadError` (`SigningHandler.swift:129–134`). A bad key/profile or partial sign may therefore be accepted as success, or an error may be shown after a broken artifact has already been stored. Propagate both the Boolean and callback error and only move/register after signing has definitively succeeded.
+### 4.4 High — Zsign failures reported as success — **RECHECKED / RESOLVED**
 
-### High — OCSP data is not checked for response freshness, and “good” can outlive verification
+`ODZsignOutcome.validate(returned:callbackSuccess:callbackError:)` requires the Boolean return, the callback, callback success, and (separately) a `checkSigned` presence check before the app is moved into Library storage. `ODZsignOutcomeTests` covers true/false/missing/error paths. **RESOLVED.** Note: `Zsign.checkSigned` is a *presence* check, not cryptographic verification — still true.
 
-`ODOCSPCore` parses `thisUpdate` and `nextUpdate`, but `ODOCSPChecker.check()` does not validate either against the current time before returning a status. It also returns `.valid` for a `good` response when signature verification is `.unverifiable`, merely adding a detail string (`ODOCSPChecker.swift:116–153`). Since the signing pipeline uses this stored status in its revoked-certificate gate, stale or unverifiable data can be presented as valid. Validate responder authorization/signature and the response validity window; add tests for stale, malformed, unknown, bad-signature, and revoked responses before relying on “Block Signing.”
+### 4.5 High — OCSP "good" could outlive verification — **RECHECKED / RESOLVED**
 
-### High — Core Data recovery deliberately deletes user payloads
+`ODOCSPResult.isFresh(...)` now requires `signatureVerified` and validates `checkedAt`, `producedAt`, `thisUpdate`, and `nextUpdate` against the current time. `ODOCSPFreshnessTests` and `ODOCSPResponderAuthorizationTests` cover stale/bad-signature/delegated-responder cases. **RESOLVED** for the code paths tested. Live Apple interoperability remains unverified (§6).
 
-If the persistent store fails to load, `Storage._destroyStore` removes the SQLite store and the entire `Documents/Signed`, `Documents/Unsigned`, and `Documents/Certificates` trees (`Storage.swift:53–85`) before retrying. A migration/store issue can therefore erase signed apps, imported apps, certificates, and private-key files rather than preserving them for recovery. Back up/move data and use a non-destructive migration/recovery path; do not delete user payloads as a store-load fallback.
+### 4.6 High — Core Data recovery deleted user payloads — **RECHECKED / RESOLVED**
 
-### Medium — Apple ID signing material is not cleaned up on failure
+`Storage._loadPersistentStore` surfaces a load failure as `storeLoadError`; it does **not** delete the SQLite store or the `Signed`/`Unsigned`/`Certificates` trees. `FeatherApp` shows a "Library unavailable" screen and gates startup work on `isStoreLoaded`. **RESOLVED.**
 
-`prepareSigning()` writes the Apple ID `.p12` and profile to a UUID-named temporary directory (`ODAppleIDManager.swift:561–577`). `ODSignPipeline.sign()` removes that directory only after `FR.signPackageFile` succeeds (`ODSignPipeline.swift:181–199`). A thrown signing error skips cleanup, leaving certificate material in temporary storage. Use guaranteed cleanup (`defer`/scoped temporary storage) on success, failure, and cancellation, and protect both files consistently.
+### 4.7 Medium — Apple ID signing material not cleaned on failure — **RECHECKED / RESOLVED**
 
-### Medium — the global “Delete IPA After Signing” setting cannot reliably turn deletion off
+`ODSignPipeline.sign()` uses `defer` to remove the Apple ID temporary directory on success, failure, and cancellation; `ODAppleIDManager.cleanupStaleSigningMaterial()` removes app-owned material older than 24h at startup. `ODAppleIDMaterialCleanupTests` covers stale cleanup. **RESOLVED.**
 
-`ODPrefs.registerDefaults()` sets `autoDeleteIPAs` to `false` (`ODPrefs.swift:42–53`), and the pipeline only forces `post_deleteAppAfterSigned` to `true` when that preference is true (`ODSignPipeline.swift:131–133`). But `Options.defaultOptions` initializes `post_deleteAppAfterSigned` to `true` (`OptionsManager.swift:157–158`). On a fresh install the setting being off does not override the signing option, so the imported app can still be deleted. Make the preference authoritative and cover both settings states with tests.
+### 4.8 Medium — "Delete IPA After Signing" default could not be turned off — **RECHECKED / RESOLVED**
 
-### Medium — build and runtime validation gaps
+`Options.defaultOptions` now initializes `post_deleteAppAfterSigned: false`, aligned with `ODPrefs.autoDeleteIPAs` default `false`. **RESOLVED** for new installs. Existing persisted `Options` are deliberately not migrated (a saved `true` cannot be distinguished from an explicit choice) — documented in `SECURITY_RELIABILITY_REMEDIATION.md`.
 
-- The build downloads a live external dependency from `backloop.dev` (`Makefile:6, 21`), so IPA production is coupled to that service's availability and key rotation. Keep private deployment material out of CI outputs and make routine builds reproducible.
-- There is no app-level `Package.resolved`; `SideSign/Package.swift` includes dependencies tracked by `main`/`master` branches. The tracked `SideSign/Package.resolved` may not lock dependencies when SideSign is consumed as a local package by the app. Commit/verify a root workspace resolution lock.
-- `ServerInstaller._setup()` swallows setup errors with `try?`, and both install sheets construct it with `try!`. A server/port/TLS setup problem can become a failed or crashing install flow instead of a surfaced diagnostic.
-- The recommended-source fetch in `SourcesAddView` schedules result appends in unstructured `Task { @MainActor … }` blocks but resumes the checked continuation immediately (`SourcesAddView.swift:183–204`). The task group does not explicitly wait for those appends, so recommended-source results may be incomplete. `SourcesViewModel` also advances the last-refresh timestamp after a batch even when some/all sources failed.
+### 4.9 Medium — build/runtime validation gaps — **RECHECKED / PARTIALLY RESOLVED**
 
-## Build and validation status
+- **No root `Package.resolved`** — remote package versions are resolved at build time; SideSign's `Package.swift` pins several deps to moving branches. **NEW/ONGOING.**
+- **`ServerInstaller._setup()` swallows setup errors** — `make(...)` now captures `startupError` and sets `.broken(error)`, so a failed server setup is surfaced rather than crashing. **RESOLVED** at the `ServerInstaller.make` level; the two install sheets still construct via `make`.
+- **Source fetch result appends** — `SourcesAddView` recommended-source results; the previous concern about unstructured `Task { @MainActor }` appends. Needs a re-read of the current `SourcesAddView` to confirm. **TO VERIFY.**
+- **`DefaultSources.json` ships live third-party sources** (`fastsign.dev`, `repository.apptesters.org`, `ipa.cypwn.xyz`) plus `ADD_HERESOURCE` placeholder. These are fetched on first launch. **NEW — supply-chain consideration** (see §5).
+- **`NSAppTransportSecurity` allows insecure HTTP** for `certs.apple.com`, `crl.apple.com`, `ocsp.apple.com` (OCSP responders are HTTP-only in practice). **NEW — documented.**
 
-### Existing CI evidence
+### 4.10 NEW — submodules not initialized in this checkout
 
-The exact audited revision has a successful GitHub Actions run:
+`Zsign` and `IDeviceKitten` working trees are empty. Any local build must run `git submodule update --init --recursive` first. CI does this via `actions/checkout@v4` `submodules: recursive`. Not a defect in the repo, but a reproduction prerequisite.
 
-- **Run:** [37659670246](https://github.com/mirazbakis/Odysseus/actions/runs/37659670246)
-- **Commit:** `2664dadedf9aca36fda0925a8aada92e2c79323f`
-- **Job:** `Build unsigned Odysseus.ipa` — success
-- **Date:** 2026-10-07
-- **Steps:** Xcode setup, versioning, `make iphoneos`, IPA artifact upload, and nightly publish all succeeded.
+### 4.11 NEW — single squashed commit
 
-This is a strong baseline **build/package** result. It is not proof of device installation, certificate signing correctness, Apple ID portal compatibility, or OCSP correctness. The workflow has no test job and the scheme has no testables.
+`git log` shows exactly one commit. This means: no upstream Feather history is available locally for `git cherry-pick`; all Feather-derived changes were imported as a snapshot. Integration planning must treat upstream code as **copy/adapt**, not `git cherry-pick`, unless a history-preserving fork is created.
 
-### Checks performed for this audit
+### 4.12 NEW — no device/account/service validation
 
-- Initialized and inspected the Git-pinned Zsign and IDeviceKitten submodules.
-- Reviewed the project/target settings, `Makefile`, Actions workflow, source/catalog, persistence, signing, Apple ID, OCSP, installation, and settings paths.
-- Parsed the app plists/entitlements, Core Data model, scheme/storyboard XML, source/config JSON, and asset-catalog JSON successfully.
-- Ran `make -n iphoneos` to inspect the packaging commands; did **not** run the build because this environment is Linux and does not provide `xcodebuild`, `swift`, or `swiftc`.
-- Found no unit/integration test source or target.
+No physical-device test has been run for: Fully Local TLS with an owned identity, Semi Local install, pairing install, certificate signing, Apple ID portal flow, or live OCSP against Apple's responder. CI runs simulator unit tests + an unsigned IPA build + `verify_ipa.sh`.
 
-## Recommended order from this baseline
+## 5. Security / supply-chain notes (current tree)
 
-1. Stop bundling the TLS private key; rotate the shared key if it is real, and correct the sign-then-copy packaging order with signature verification in CI.
-2. Fix signing success/failure propagation and Core Data queue ownership before changing sign/install architecture.
-3. Harden and unit-test OCSP response verification/freshness; preserve user data on Core Data recovery; guarantee temporary-key cleanup.
-4. Add app-level test targets and CI test/static checks. Keep the current macOS IPA build workflow; extend it rather than adding a competing build pipeline.
-5. Then perform Phase 2: audit each of the nine reference projects for feature overlap, platform constraints, dependency provenance, and license/attribution obligations. No bulk feature integration was started in this baseline-audit step.
+1. **Default sources are live third-party endpoints.** First launch installs them automatically. A compromised/malicious default source feeds the Discover catalog and can influence what users install. Consider: removing third-party defaults, or gating them behind an explicit opt-in. **TO DECIDE.**
+2. **Insecure HTTP allowed for OCSP/CRL/certs endpoints.** Intentional (Apple's responders are HTTP), but it means ATS is explicitly relaxed for those hosts. Documented.
+3. **`get-task-allow` entitlement present.** Required for the install/sign flows. Fully Local server mode needs additional entitlements on iOS 18+ (documented in `HOW_IT_WORKS.md`) that are **not** in `Feather.entitlements`; the registered default is Semi Local.
+4. **Certificate export via URL scheme** (`odysseus://export-certificate`) sends the p12 + password to a caller-supplied callback. Guarded by Face ID + warning per `Info.plist` usage string, but the capability is broad. Documented.
+5. **No root `Package.resolved`** and branch-pinned SideSign deps → non-reproducible builds.
+
+## 6. Build & validation status
+
+### CI evidence
+- Workflow: `.github/workflows/build.yml` — runs on `macos-26`, Xcode `26.4`.
+- Steps: checkout (`submodules: recursive`) → `xcodebuild test` (iOS Simulator, iPhone 17) → version → `make iphoneos` → `scripts/verify_ipa.sh` → upload IPA → publish nightly/release.
+- The previous audit referenced successful run `37659670246` (2026-10-07) at the older revision. **The current revision `2a54e3b` has not been independently re-verified in this session** — no CI run was fetched for it. Treat the current revision's CI status as **UNVERIFIED** until a run is observed.
+
+### Checks performed in this audit
+- Read the full current source tree (all `Feather/**`, `OdysseusTests/**`, `SideSign/Sources/**`).
+- Parsed `project.pbxproj`, `Feather.xcconfig`, `Info.plist`, `Feather.entitlements`, `license_plist.yml`, `Makefile`, `scripts/verify_ipa.sh`, `.github/workflows/build.yml`, `DefaultSources.json`, `app-repo.json`.
+- Initialized and cloned upstream reference repos (see `UPSTREAM_SOURCE_REGISTER.md`).
+- **Not run (Linux sandbox, no Apple tooling):** `xcodebuild`, `swiftc`, XCTest, `codesign`, `ditto`, IPA verification, SwiftPM resolution/audit.
+
+## 7. LiveContainer-style app container — feasibility note
+
+The current tree **does not** host apps in a container. It only ports a small LiveContainer Mach-O fixup (`Feather/Utilities/MachO/MachOUtils.m`, Apache-2.0, credited to LiveContainer commit `3a029b6`) used to patch SDK-26 / arm64e slices during signing.
+
+LiveContainer itself (`LiveContainer/LiveContainer`, AGPL-3.0) is a fundamentally different architecture: a host executable that patches the guest Mach-O (`__PAGEZERO`, `MH_EXECUTE`→`MH_DYLIB`, `_NSGetExecutablePath` hook, `NSBundle.mainBundle` override, dyld memory loading), `dlopen`s the guest, jumps to its entry point, and runs it in-process. It requires:
+
+- entitlements beyond `get-task-allow`: `com.apple.developer.kernel.increased-memory-limit`, `application-identifier`, healthkit, 128 keychain access groups, app groups;
+- a `LiveProcess` helper binary + `LaunchAppExtension`/`ShareExtension`/`MultitaskSupport`/`TweakLoader`/`SideStoreSupport` targets;
+- acceptance that guest containers are **not sandboxed** (one guest can read another's data) and that app extensions don't work.
+
+This is a **separate feasibility and security workstream**, not a signing feature. It is **BLOCKED / INVESTIGATE** in the matrix pending an explicit decision; see `ARCHITECTURE.md` §6 and `INTEGRATION_PLAN.md` Batch 8.
+
+## 8. Recommended order (current revision)
+
+1. Keep the existing security remediations green; do not regress the `ODZsignOutcome`/OCSP/Core-Data guarantees.
+2. Reconcile the upstream register and feature matrix (`UPSTREAM_SOURCE_REGISTER.md`, `SOURCE_INTEGRATION_MATRIX.md`). **All nine named identities are now resolved:** FeatherPlus is a verified Feather fork with no distinct capability (EXCLUDE); Zeus and FlareStore are closed-source products with no public source repo (concept-reference only); FlekPair source is not published (EXCLUDE).
+3. Adopt small, independently reviewable feature batches from Ksign/RyukSign/Feather upstream (update checker, bulk signing, Web/WebDAV transfer, Live Activities, file manager) — see `INTEGRATION_PLAN.md`.
+4. Treat LiveContainer/FlekDeck app-container hosting as a separate gated workstream.
+5. Add device/account validation before claiming install/sign correctness.
+
+---
+
+## Appendix A — previous audit (`2664dad`)
+
+The historical audit is preserved below for provenance. Its commit/branch differ from the current revision; findings marked **RESOLVED** above were addressed by the remediation recorded in `docs/SECURITY_RELIABILITY_REMEDIATION.md` (branch `arena/03624e7c-odysseus`, base `882ef8e2ad958d9a41463e61b62608c885315732`), whose changed-path list matches the current tree.
+
+> *(The body of the previous audit is retained in the repository's prior revision of this file; the current revision supersedes its status claims.)*

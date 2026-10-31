@@ -104,6 +104,7 @@ struct FRAppIconView: View {
 		}
 	}
 	
+	@MainActor
 	private func _load() {
 		let bundleURL: URL
 

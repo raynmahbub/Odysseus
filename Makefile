@@ -3,9 +3,8 @@ SCHEME := Feather
 PLATFORMS := iphoneos maccatalyst
 
 TMP := $(TMPDIR)/$(NAME)
-CERT_JSON_URL := https://backloop.dev/pack.json
 
-.PHONY: all clean deps $(PLATFORMS)
+.PHONY: all clean $(PLATFORMS) verify-ipa
 
 all: $(PLATFORMS)
 
@@ -13,18 +12,10 @@ clean:
 	rm -rf $(TMP)
 	rm -rf packages
 	rm -rf Payload
+	rm -rf _build
+	rm -rf deps cert.json
 
-deps:
-	rm -rf deps || true
-	mkdir -p deps
-
-	curl -fsSL "$(CERT_JSON_URL)" -o cert.json
-	jq -r '.cert' cert.json > deps/server.crt
-	jq -r '.key1, .key2' cert.json > deps/server.pem
-	jq -r '.info.domains.commonName' cert.json > deps/commonName.txt
-
-
-$(PLATFORMS): deps
+$(PLATFORMS):
 	rm -rf _build
 
 	@if [ "$@" = "iphoneos" ]; then \
@@ -45,8 +36,7 @@ $(PLATFORMS): deps
 	mkdir -p _build/Payload
 	cp -R _build/Applications/*.app _build/Payload/$(NAME).app
 	chmod -R 0755 _build/Payload/$(NAME).app
-	codesign --force --sign - --timestamp=none _build/Payload/$(NAME).app
-	cp deps/* _build/Payload/$(NAME).app/ || true
+	codesign --force --deep --sign - --timestamp=none _build/Payload/$(NAME).app
 
 	mkdir -p packages
 
@@ -55,3 +45,6 @@ $(PLATFORMS): deps
 	else \
 		ditto -c -k --sequesterRsrc --keepParent _build/Payload/$(NAME).app "packages/$(NAME)_Catalyst.zip"; \
 	fi
+
+verify-ipa:
+	scripts/verify_ipa.sh packages/$(NAME).ipa

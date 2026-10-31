@@ -11,6 +11,7 @@ import AltSourceKit
 import NimbleJSON
 import OSLog
 import UIKit.UIImpactFeedbackGenerator
+import NimbleExtensions
 
 // MARK: - View
 struct SourcesAddView: View {
@@ -176,32 +177,35 @@ struct SourcesAddView: View {
 	private func _concurrentFetchRepositories(
 		from urls: [URL]
 	) async -> [(url: URL, data: ASRepository)] {
-		var results: [(url: URL, data: ASRepository)] = []
-		
 		let dataService = _dataService
-		
-		await withTaskGroup(of: Void.self) { group in
+		return await withTaskGroup(
+			of: (url: URL, repository: ASRepository?).self,
+			returning: [(url: URL, data: ASRepository)].self
+		) { group in
 			for url in urls {
 				group.addTask {
 					await withCheckedContinuation { continuation in
-						dataService.fetch<ASRepository>(from: url) { (result: RepositoryDataHandler) in
+						dataService.fetch(from: url) { (result: RepositoryDataHandler) in
 							switch result {
-							case .success(let repo):
-								Task { @MainActor in
-									results.append((url: url, data: repo))
-								}
+							case .success(let repository):
+								continuation.resume(returning: (url, repository))
 							case .failure(let error):
 								Logger.misc.error("Failed to fetch \(url): \(error.localizedDescription)")
+								continuation.resume(returning: (url, nil))
 							}
-							continuation.resume()
 						}
 					}
 				}
 			}
-			await group.waitForAll()
+
+			var results: [(url: URL, data: ASRepository)] = []
+			for await (url, repository) in group {
+				if let repository {
+					results.append((url, repository))
+				}
+			}
+			return results
 		}
-		
-		return results
 	}
 
 }

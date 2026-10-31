@@ -8,6 +8,7 @@ import Nuke
 import IDeviceSwift
 import OSLog
 import AltSourceKit
+import NimbleExtensions
 
 @main
 struct FeatherApp: App {
@@ -19,13 +20,26 @@ struct FeatherApp: App {
 	@StateObject private var _sourceFetchErrorToast = SourceFetchErrorToastCenter.shared
 	@Environment(\.scenePhase) private var _scenePhase
 	@AppStorage("Feather.userTintColor") private var _tintHex: String = "#B8CCF0"
-	let storage = Storage.shared
+	@StateObject private var storage = Storage.shared
 
 	var body: some Scene {
 		WindowGroup {
-			ODRootView()
-				.environment(\.managedObjectContext, storage.context)
-				.tint(Color(hex: _tintHex))
+			Group {
+				if let error = storage.storeLoadError {
+					ContentUnavailableView(
+						.localized("Library unavailable"),
+						systemImage: "externaldrive.badge.exclamationmark",
+						description: Text(verbatim: String.localized("Odysseus couldn't open its Library database. Existing Library data was preserved. Restart the app and contact the developer if this continues. Error: %@", arguments: error.localizedDescription))
+					)
+				} else if storage.isStoreLoaded {
+					ODRootView()
+						.environment(\.managedObjectContext, storage.context)
+				} else {
+					ProgressView(.localized("Loading Library…"))
+						.frame(maxWidth: .infinity, maxHeight: .infinity)
+				}
+			}
+			.tint(Color(hex: _tintHex))
 				.animation(.smooth, value: downloadManager.manualDownloads.description)
 				.overlay(alignment: .bottom) {
 					if let message = _sourceFetchErrorToast.message {
@@ -54,7 +68,7 @@ struct FeatherApp: App {
 					window?.tintColor = UIColor(Color(hex: UserDefaults.standard.string(forKey: ODPrefs.tintColor) ?? ODTheme.moonlightHex))
 				}
 				.onChange(of: _scenePhase) { _, phase in
-					guard phase == .active else { return }
+					guard phase == .active, storage.isStoreLoaded else { return }
 					Task { @MainActor in
 						await ODCertificateStatusStore.shared.checkAllIfNeeded()
 						await ODCatalogStore.shared.refreshIfNeeded()
@@ -63,7 +77,15 @@ struct FeatherApp: App {
 		}
 	}
 	
+	@MainActor
 	private func _handleURL(_ url: URL) {
+		guard storage.isStoreLoaded else {
+			UIAlertController.showAlertWithOk(
+				title: .localized("Library unavailable"),
+				message: .localized("The Library database isn't ready. Try again after it loads, or restart Odysseus if it failed to open.")
+			)
+			return
+		}
 		if url.scheme == "odysseus" {
 			/// odysseus://select-certificate?cert=<nickname|uuid|profile-name|profile-uuid|team-name|index>
 			/// odysseus://switch-certificate?cert=<nickname|uuid|profile-name|profile-uuid|team-name|index>
@@ -162,6 +184,7 @@ struct FeatherApp: App {
 		}
 	}
 
+	@MainActor
 	private func _handleCertificateSelectionURL(_ url: URL) {
 		guard
 			let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -213,11 +236,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 		didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
 	) -> Bool {
 		ODPrefs.registerDefaults()
+		ODLocalServerTLS.removeLegacySharedMaterial()
 		_createPipeline()
 		_createDocumentsDirectories()
-		ResetView.clearWorkCache()
+		do {
+			try ResetView.clearWorkCache()
+		} catch {
+			Logger.misc.error("Temporary work cache cleanup failed (error code \(error._code)).")
+		}
 		Task { @MainActor in
-			await _installStartupSources()
+			ODAppleIDManager.cleanupStaleSigningMaterial()
+			do {
+				try await Storage.shared.waitUntilStoreLoaded()
+				await _installStartupSources()
+			} catch {
+				Logger.misc.error("Startup services were skipped because the Library database is unavailable (error code \(error._code)).")
+			}
 		}
 		return true
 	}

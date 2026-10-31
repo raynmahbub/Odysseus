@@ -1,6 +1,6 @@
 # Odysseus architecture
 
-**Audit date:** 2026-10-31 (UTC) · **Revision:** `2a54e3b`
+**Audit date:** 2026-10-31 (UTC) · **Revision:** `c2040b0` (byte-identical to the audited `2a54e3b` outside `docs/`)
 **Scope:** document the *verified* current architecture and a *proposed* target architecture for integrating upstream features. Distinguishes facts from proposals.
 
 ---
@@ -153,7 +153,7 @@ ODPrefs/Options  (settings)                                        Core Data / F
 ## 5. Persistence and migration implications
 
 - Core Data model `Feather` currently has entities for `Signed`, `Imported`, `CertificatePair`, `AltSource` (and the Odysseus additions). New features that need persistence:
-  - **Update checker:** a `SourceMetadata` entity (Feather upstream) or a UserDefaults cache (RyukSign). Prefer a small Core Data entity if cross-device consistency matters.
+  - **Update checker:** Batch 1 (re-proposed) persists **nothing** in Core Data — it compares against the in-memory `ODCatalogStore` catalog and keeps only a UserDefaults mute list, so it needs no model change. Provenance (`AppSourceMetadata` entity, Feather upstream) is deferred to Batch 1b because it requires a new model version plus a migration test. See `BATCH1_READINESS_REVIEW.md` §3.7 and §6.11.
   - **Tweak library:** a new entity (`Tweak`/`TweakFile`) or a folder-based store under Documents. RyukSign uses folder + models; decide one.
   - **Batch queue:** in-memory + persisted job records if interruption recovery is required.
 - Migration: adding entities is additive (no breaking migration) as long as the model version is bumped and lightweight migration is enabled (`NSPersistentContainer` default). **Do not** reuse the destructive recovery path removed in the remediation.
@@ -172,7 +172,7 @@ ODPrefs/Options  (settings)                                        Core Data / F
 
 | Decision | Options | Trade-off / recommendation |
 |---|---|---|
-| Update checker source | Feather `UpdateManager` vs RyukSign `AppUpdateChecker` | Adopt RyukSign's (per-app ignore + settings); Feather's is simpler. |
+| Update checker source | Feather `UpdateManager` vs RyukSign `AppUpdateChecker` | **Resolved:** take RyukSign's skip list, reject its matcher (name matching, `originalIdentifier`, off-main `FetchedResults`), and drive both from `ODCatalogStore`. Feather's `AppSourceMetadata` design is Batch 1b. See `BATCH1_READINESS_REVIEW.md` §3. |
 | Tweak management | RyukSign `TweakManager` vs keep per-sign only | RyukSign's is a distinct, high-value feature; adopt with an OD-native library layout. |
 | Backup | RyukSign `BackupManager` vs SideStore `SideBackup` | Pick one; RyukSign's is self-contained; SideBackup implies SideStore refresh. |
 | Web transfer | RyukSign HTTP/WebDAV vs custom | Adopt RyukSign's; reuses Vapor. |

@@ -1,7 +1,7 @@
 # Source integration matrix
 
-**Audit date:** 2026-10-31 (UTC)
-**Basis:** current Odysseus tree at `2a54e3b` + shallow clones of verified upstreams (see `UPSTREAM_SOURCE_REGISTER.md`).
+**Audit date:** 2026-10-31 (UTC) · **Revised:** 2026-10-31 (counts and status model corrected — see `BATCH1_READINESS_REVIEW.md` §2)
+**Basis:** current Odysseus tree at `c2040b0` (byte-identical to the audited `2a54e3b` outside `docs/`) + shallow clones of verified upstreams at pinned commits (see `UPSTREAM_SOURCE_REGISTER.md`).
 **Purpose:** inventory **distinct capabilities** (not broad categories), de-duplicate shared ancestry, and assign a proposed classification per capability before any code changes.
 
 ## Classification legend
@@ -19,34 +19,62 @@
 
 ## Verification legend (per capability)
 
-`SOURCE_VERIFIED · LICENSE_REVIEWED · IMPLEMENTED · BUILD_VERIFIED · AUTOMATED_TESTED · SIMULATOR_TESTED · PHYSICAL_DEVICE_TESTED · DOCUMENTED` — each is set only when evidence exists. Most upstream candidate features are currently `SOURCE_VERIFIED` only (code inspected); nothing new is `IMPLEMENTED` yet.
+`SOURCE_VERIFIED · LICENSE_REVIEWED · IMPLEMENTED · BUILD_VERIFIED · AUTOMATED_TESTED · SIMULATOR_TESTED · PHYSICAL_DEVICE_TESTED · DOCUMENTED` — each is set only when evidence exists. Most upstream candidate features are currently `SOURCE_VERIFIED` only (code inspected); no new capability has been built yet.
+
+## Status model — "implemented" is not one fact
+
+Earlier revisions of this file wrote `IMPLEMENTED` for every existing capability. That single word conflated *code exists*, *code is new*, and *behaviour was tested*. Use these instead, and never claim more than the evidence:
+
+| Status | Meaning | Evidence |
+|---|---|---|
+| `CODE_PRESENT` | In the baseline tree and reachable from the app | file path |
+| `NEW_IN_BRANCH` | Added on the current branch | diff against `master` |
+| `UNIT_TESTED` | An automated test exercises that behaviour | named test case |
+| `BUILD_VERIFIED` | CI compiled and packaged it at a named commit | CI run id |
+| `SIMULATOR_TESTED` / `PHYSICAL_DEVICE_TESTED` | Exercised at runtime | run log / device note |
+| `NOT_RUN` | No evidence | — |
+
+State of the tree at `c2040b0`: **0** capabilities are `NEW_IN_BRANCH`; **0** are `PHYSICAL_DEVICE_TESTED`; **1** existing capability is `UNIT_TESTED` in full (OD-CERT-01) and **3** more have partial automated coverage (OD-SIG-01, OD-APP-01, OD-LIB-01).
+
+### Automated test coverage actually present (16 XCTest cases, 6 files)
+
+| Test file | Cases | Capability covered |
+|---|---|---|
+| `OdysseusTests/ODZsignOutcomeTests.swift` | 5 | OD-SIG-01 — outcome validation only, not signing |
+| `OdysseusTests/ODOCSPCoreTests.swift` | 2 | OD-CERT-01 — parser binding |
+| `OdysseusTests/ODOCSPFreshnessTests.swift` | 2 | OD-CERT-01 — freshness window |
+| `OdysseusTests/ODOCSPResponderAuthorizationTests.swift` | 3 | OD-CERT-01 — responder authorization |
+| `OdysseusTests/StorageConcurrencyTests.swift` | 3 | persistence + OD-LIB-01 |
+| `OdysseusTests/ODAppleIDMaterialCleanupTests.swift` | 1 | OD-APP-01 — temp-material cleanup only |
+
+Everything else below is **code-present and untested**.
 
 ---
 
 ## Part 1 — Existing Odysseus capabilities (proposed KEEP)
 
-These are already implemented at `2a54e3b`. They are listed so the matrix is complete and so regressions are visible. All are `IMPLEMENTED`; build/test status is as recorded in `BASELINE_AUDIT.md` §6.
+These exist in the baseline tree at `c2040b0`. They are listed so the matrix is complete and so regressions are visible. All are `CODE_PRESENT`; the Status column records only the automated-test evidence above, and `BASELINE_AUDIT.md` §6 records the build evidence. None is device-verified.
 
 | ID | Capability | Source / path | License | Duplicates | Class | Status |
 |---|---|---|---|---|---|---|
-| OD-DISC-01 | Discover storefront: featured carousel, New & Updated, Recently Added, per-source row, categories, search | `Views/Odysseus/Discover/*`, `ODCatalog*` | GPL-3.0 (Feather) | Ksign `AppstoreView`; FlekDeck installer | KEEP | IMPLEMENTED |
-| OD-DISC-02 | Duplicate grouping ("available from N sources") + pick source | `ODCatalog.build` | GPL-3.0 | — | KEEP | IMPLEMENTED |
-| OD-SRC-01 | AltStore/ESign sources: add by URL, QR, import/export, auto-refresh | `Views/Sources/*`, `Storage+Sources`, `DefaultSourceInstaller` | GPL-3.0 + MIT(AltSourceKit) | Ksign/RyukSign sources | KEEP | IMPLEMENTED |
-| OD-LIB-01 | Library: Signed / Downloaded / Imported, expiry pills | `Views/Odysseus/Library/ODLibraryView.swift` | GPL-3.0 | RyukSign Library | KEEP | IMPLEMENTED |
-| OD-SIG-01 | Certificate signing via Zsign (`.p12`+`.mobileprovision`) | `ZsignHandler`, `SigningHandler`, `ODSignPipeline` | GPL-3.0 + MIT(zsign) | Ksign/RyukSign signing | KEEP | IMPLEMENTED |
-| OD-SIG-02 | Bundle-ID prefix/suffix, entitlements, app name/version, appearance, min-iOS, file-sharing, URL-scheme removal | `SigningHandler._modifyDict`, `Options` | GPL-3.0 | Ksign/RyukSign signing options | KEEP | IMPLEMENTED |
-| OD-SIG-03 | PPQ protection (append identifier, dynamic protection flag) | `Options.ppq*` | GPL-3.0 | — | KEEP | IMPLEMENTED |
-| OD-SIG-04 | Tweak injection: `.dylib`/`.deb`/`.framework`/`.bundle`, ElleKit/CydiaSubstrate, extension injection | `TweakHandler` | GPL-3.0 + ElleKit(BSD-3) | Ksign/RyukSign tweaks | KEEP | IMPLEMENTED |
-| OD-SIG-05 | Liquid Glass (SDK 26) + arm64e Mach-O fixups | `SigningHandler` + `Utilities/MachO/MachOUtils.m` | Apache-2.0 (LiveContainer) | LiveContainer patching | KEEP | IMPLEMENTED |
-| OD-APP-01 | Apple ID signing (SideSign): login/2FA, anisette, cert/device/AppID/profile, p12 export | `Backend/AppleID/*`, `SideSign/` | AGPL-3.0 | SideStore | KEEP | IMPLEMENTED |
-| OD-CERT-01 | OCSP revocation checks + freshness + responder authorization | `Backend/Certificates/ODOCSP*` | GPL-3.0 | — | KEEP | IMPLEMENTED; AUTOMATED_TESTED (unit) |
-| OD-CERT-02 | Certificate library, expiry reminders, revoked policy (warn/block/allow) | `ODCertificateStatusStore`, `ODPrefs` | GPL-3.0 | — | KEEP | IMPLEMENTED |
-| OD-INS-01 | Semi-local install (local HTTP server + external plist server + webview redirect) | `ServerInstaller*`, `InstallPreviewView` | GPL-3.0 + Vapor | Ksign/RyukSign servers | KEEP | IMPLEMENTED |
-| OD-INS-02 | Fully-local install with user-owned TLS identity | `ODLocalServerTLS`, `ServerView` | GPL-3.0 | — | KEEP | IMPLEMENTED |
-| OD-INS-03 | Pairing-file + LocalDevVPN install via IDevice | `FR.movePairing`, `HeartbeatManager`, IDeviceKitten | MIT(idevice) | FlekPair/RyukSign | KEEP | IMPLEMENTED |
-| OD-DIA-01 | Diagnostics + log export | `ODDiagnosticsView`, `Logger++` | GPL-3.0 | Ksign/RyukSign logs | KEEP | IMPLEMENTED |
-| OD-UI-01 | Themes/tint, appearance, iOS 18/26 tab bar, iPad sidebar | `ODTheme`, `ODRootView` | GPL-3.0 | FlekDeck personalization | KEEP | IMPLEMENTED |
-| OD-URL-01 | `odysseus://` URL schemes (cert select/import/export, source, install) | `FeatherApp._handleURL` | GPL-3.0 | Ksign `ksign://` | KEEP | IMPLEMENTED |
+| OD-DISC-01 | Discover storefront: featured carousel, New & Updated, Recently Added, per-source row, categories, search | `Views/Odysseus/Discover/*`, `ODCatalog*` | GPL-3.0 (Feather) | Ksign `AppstoreView`; FlekDeck installer | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-DISC-02 | Duplicate grouping ("available from N sources") + pick source | `ODCatalog.build` | GPL-3.0 | — | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-SRC-01 | AltStore/ESign sources: add by URL, QR, import/export, auto-refresh | `Views/Sources/*`, `Storage+Sources`, `DefaultSourceInstaller` | GPL-3.0 + MIT(AltSourceKit) | Ksign/RyukSign sources | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-LIB-01 | Library: Signed / Downloaded / Imported, expiry pills | `Views/Odysseus/Library/ODLibraryView.swift` | GPL-3.0 | RyukSign Library | KEEP | `CODE_PRESENT`; `UNIT_TESTED` (concurrency only) |
+| OD-SIG-01 | Certificate signing via Zsign (`.p12`+`.mobileprovision`) | `ZsignHandler`, `SigningHandler`, `ODSignPipeline` | GPL-3.0 + MIT(zsign) | Ksign/RyukSign signing | KEEP | `CODE_PRESENT`; `UNIT_TESTED` (outcome validation only) |
+| OD-SIG-02 | Bundle-ID prefix/suffix, entitlements, app name/version, appearance, min-iOS, file-sharing, URL-scheme removal | `SigningHandler._modifyDict`, `Options` | GPL-3.0 | Ksign/RyukSign signing options | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-SIG-03 | PPQ protection (append identifier, dynamic protection flag) | `Options.ppq*` | GPL-3.0 | — | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-SIG-04 | Tweak injection: `.dylib`/`.deb`/`.framework`/`.bundle`, ElleKit/CydiaSubstrate, extension injection | `TweakHandler` | GPL-3.0 + ElleKit(BSD-3) | Ksign/RyukSign tweaks | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-SIG-05 | Liquid Glass (SDK 26) + arm64e Mach-O fixups | `SigningHandler` + `Utilities/MachO/MachOUtils.m` | Apache-2.0 (LiveContainer) | LiveContainer patching | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-APP-01 | Apple ID signing (SideSign): login/2FA, anisette, cert/device/AppID/profile, p12 export | `Backend/AppleID/*`, `SideSign/` | AGPL-3.0 | SideStore | KEEP | `CODE_PRESENT`; `UNIT_TESTED` (temp-material cleanup only) |
+| OD-CERT-01 | OCSP revocation checks + freshness + responder authorization | `Backend/Certificates/ODOCSP*` | GPL-3.0 | — | KEEP | `CODE_PRESENT`; `UNIT_TESTED` (OCSP parser, freshness, responder authz) |
+| OD-CERT-02 | Certificate library, expiry reminders, revoked policy (warn/block/allow) | `ODCertificateStatusStore`, `ODPrefs` | GPL-3.0 | — | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-INS-01 | Semi-local install (local HTTP server + external plist server + webview redirect) | `ServerInstaller*`, `InstallPreviewView` | GPL-3.0 + Vapor | Ksign/RyukSign servers | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-INS-02 | Fully-local install with user-owned TLS identity | `ODLocalServerTLS`, `ServerView` | GPL-3.0 | — | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-INS-03 | Pairing-file + LocalDevVPN install via IDevice | `FR.movePairing`, `HeartbeatManager`, IDeviceKitten | MIT(idevice) | FlekPair/RyukSign | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-DIA-01 | Diagnostics + log export | `ODDiagnosticsView`, `Logger++` | GPL-3.0 | Ksign/RyukSign logs | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-UI-01 | Themes/tint, appearance, iOS 18/26 tab bar, iPad sidebar | `ODTheme`, `ODRootView` | GPL-3.0 | FlekDeck personalization | KEEP | `CODE_PRESENT`; `NOT_RUN` |
+| OD-URL-01 | `odysseus://` URL schemes (cert select/import/export, source, install) | `FeatherApp._handleURL` | GPL-3.0 | Ksign `ksign://` | KEEP | `CODE_PRESENT`; `NOT_RUN` |
 
 ---
 
@@ -56,7 +84,7 @@ These are already implemented at `2a54e3b`. They are listed so the matrix is com
 
 | ID | Capability | Upstream files | Odysseus already? | Duplicates | Class | Notes |
 |---|---|---|---|---|---|---|
-| F-UPD-01 | App update checker: compare installed vs source versions, flag updates | `Backend/Observable/UpdateManager.swift`, `Backend/Storage/Storage+SourceMetadata.swift` | No | R-UPD-01 | CHERRY-PICK | Small, self-contained. Requires a `SourceMetadata` Core Data entity or UserDefaults cache. |
+| F-UPD-01 | App update checker: compare installed vs source versions, flag updates | `Backend/Observable/UpdateManager.swift`, `Backend/Storage/Storage+SourceMetadata.swift` | No | R-UPD-01 | **ADAPT** | Reclassified from CHERRY-PICK: depends on an `AppSourceMetadata` entity **and** on a provenance write path that Odysseus lacks (`AppInfoPresentable.source` is never assigned). Cannot be cherry-picked; see `BATCH1_READINESS_REVIEW.md` §3. |
 | F-TAB-01 | Custom configurable tab bar (Extended/Varied tabbar) | `Views/TabView/*` | No (replaced by OD tab bar) | R-TABBAR-01 | INVESTIGATE | Odysseus has its own iOS 18/26 tab bar; upstream tab bar may conflict. Prefer RyukSign's preference-driven approach. |
 
 ### Group B — Ksign (`Nyasami/Ksign`, GPL-3.0)
@@ -81,7 +109,7 @@ These are already implemented at `2a54e3b`. They are listed so the matrix is com
 
 | ID | Capability | Upstream files | Odysseus already? | Duplicates | Class | Notes |
 |---|---|---|---|---|---|---|
-| R-UPD-01 | App update checker with per-app ignore/skip + settings | `Backend/Observable/AppUpdateChecker.swift`, `SkippedUpdatesManager.swift`, `Views/Settings/Updates/*` | No | F-UPD-01 | CHERRY-PICK/ADAPT | Preferred source (more complete than Feather's). |
+| R-UPD-01 | App update checker with per-app ignore/skip + settings | `Backend/Observable/AppUpdateChecker.swift`, `SkippedUpdatesManager.swift`, `Views/Settings/Updates/IgnoredUpdatesView.swift` | No | F-UPD-01 | **ADAPT** | Reclassified from CHERRY-PICK/ADAPT. Preferred source for the **skip list** only. Its matcher needs an `originalIdentifier` attribute Odysseus lacks, matches on app **name** (false positives), and reads `FetchedResults` off the main thread. `Views/Settings/Updates/UpdatesSettingsView.swift` is *self-update* UI, not app updates — it does not belong to this row. See `BATCH1_READINESS_REVIEW.md` §3.4. |
 | R-UPD-02 | Self-update | `SelfUpdateManager.swift`, `Views/Updates/SelfUpdateSheet.swift` | No | — | ADAPT | Odysseus has a nightly release workflow; in-app self-update is a product decision. |
 | R-TWEAKMGR-01 | Tweak Manager: import/organize/inject; multi-file tweaks; per-file config; file-info/dependency inspector; ElleKit/Substrate detection | `Backend/Observable/TweakManager.swift`, `TweakModels.swift`, `Utilities/Handlers/Tweak{Analyzer,Extractor}.swift`, `Views/Tweaks/*` | Partial (per-sign injection only) | K-DYLIB-01 | COPY/ADAPT | Biggest distinct feature. Turns tweak injection from per-sign into a managed library. |
 | R-LIVEACT-01 | Live Activities + Dynamic Island download progress | `DownloadManager+LiveActivity.swift`, `DownloadProgressAttributes.swift`, `Views/Download/DownloadOverlay*` | No | — | ADAPT | Requires Widget Extension target + App Intents. |
@@ -158,9 +186,47 @@ These are already implemented at `2a54e3b`. They are listed so the matrix is com
 
 ## Part 4 — Summary
 
-- Distinct capabilities inventoried: **60** (Part 1: 17 existing; Part 2: 43 candidates/blocked/excluded).
+### Counting rules
+
+A row is one **distinct capability**, counted exactly once. Duplicates are noted in the "Duplicates" column but are not extra rows. Part 2 groups are `###` subsections under one `##` part; the earlier summary under-counted because the group rows were missed.
+
+| Part | Group | Rows |
+|---|---|---|
+| 1 | Existing Odysseus (KEEP) | **18** |
+| 2A | Feather | 2 |
+| 2B | Ksign | 13 |
+| 2C | RyukSign | 25 |
+| 2D | LiveContainer / FlekDeck | 14 |
+| 2E | SideStore | 3 |
+| 2F | Unverifiable / not adoptable | 4 |
+| | **Part 2 total** | **61** |
+| | **Total inventoried** | **79** |
+
+### Classification totals (Part 2)
+
+| Class | Rows |
+|---|---|
+| Adoptable (`ADAPT` 22, `CHERRY-PICK` 9, `COPY/ADAPT` 3, `CHERRY-PICK/ADAPT` 1) | **35** |
+| `INVESTIGATE` | 8 |
+| `EXCLUDE/INVESTIGATE` | 1 |
+| `BLOCKED` (all LiveContainer/FlekDeck dependents) | 13 |
+| `EXCLUDE` | 2 |
+| `CONCEPT-ONLY` | 2 |
+| **Total** | **61** |
+
+### Status totals (whole matrix)
+
+| Status | Rows |
+|---|---|
+| `NEW_IN_BRANCH` | **0** |
+| Existing capabilities with full automated coverage | 1 (OD-CERT-01) |
+| Existing capabilities with partial automated coverage | 3 (OD-SIG-01, OD-APP-01, OD-LIB-01) |
+| Existing capabilities with no automated test | 14 |
+| Device-verified capabilities | **0** |
+
+- Distinct capabilities inventoried: **79** (Part 1: 18 existing; Part 2: 61 candidates/blocked/excluded).
 - After de-duplication (Part 3), **candidate adoptable feature groups**: update checking, IPSW firmware browser (from closed-source Zeus; reimplement from scratch), tweak manager, bulk signing, web/WebDAV transfer, Live Activities, file manager, storage manager, tab-bar config, entitlements/plist editors, certificate auto-import, link parsers, UTType/shortcut helpers.
 - **BLOCKED:** entire LiveContainer/FlekDeck app-container workstream (`LC-CORE-01` and dependents).
 - **EXCLUDE:** FlekPair.
 - **CONCEPT-ONLY (closed-source; no source reuse possible):** Zeus (IPSW firmware browser), FlareStore (signing log/presets, entitlements/plist editors, backup, Update All, Live Activity downloads, Apple TV/Watch/Vision, self-update).
-- No candidate has been implemented in this audit; all new capabilities are `SOURCE_VERIFIED` (code inspected) only.
+- No candidate has been implemented in this audit; all new capabilities are `SOURCE_VERIFIED` (code inspected) only. `IMPLEMENTED` is not used for anything in this tree — see the status model above.
